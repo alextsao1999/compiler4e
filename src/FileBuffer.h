@@ -1,5 +1,5 @@
 //
-// Created by ²ÜË³ on 2019/5/3.
+// Created by ï¿½ï¿½Ë³ on 2019/5/3.
 //
 
 #ifndef PARSE_E_FILE_FILEBUFFER_H
@@ -11,16 +11,30 @@
 #include <cstdlib>
 #include <codecvt>
 #include <windows.h>
+#include "llvm/ADT/StringRef.h"
+using StringRef = llvm::StringRef;
 struct FixedData {
     char *data{nullptr};
-    int length{0};
-    FixedData(char *data, int length) : data(data), length(length) {}
+    size_t length{0};
+    FixedData(char *data, size_t length) : data(data), length(length) {}
     FixedData() = default;
     std::wstring toUnicode();
     std::string toUtf8();
     std::string toString() {
         return std::string(data, length);
     }
+    StringRef toStringRef() { return {data, length}; }
+    inline bool operator==(const FixedData&cmp) {
+        return length == cmp.length && memcmp(data, cmp.data, length) == 0;
+    }
+    inline bool operator<(const FixedData&cmp) {
+        return length < cmp.length;
+    }
+    inline bool operator==(const char *str) {
+        int len = strlen(str);
+        return length == len && memcmp(data, str, length) == 0;
+    }
+
 };
 
 class FileBuffer {
@@ -55,13 +69,13 @@ public:
     inline bool Good() { return pos < length; }
     inline void Skip(int step) { pos += step; }
     int ReadInt() {
-        // Ð¡¶Ë×Ö½ÚÐò
+        // Ð¡ï¿½ï¿½ï¿½Ö½ï¿½ï¿½ï¿½
         pos += 4;
         return (code[pos - 4] | (code[pos - 3] << 8) | (code[pos - 2] << 16) | (code[pos - 1] << 24));
     }
 
     short ReadShort() {
-        // Ð¡¶Ë×Ö½ÚÐò
+        // Ð¡ï¿½ï¿½ï¿½Ö½ï¿½ï¿½ï¿½
         pos += 2;
         return (code[pos - 2] | (code[pos - 1] << 8));
     }

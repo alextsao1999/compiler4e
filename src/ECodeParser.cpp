@@ -354,9 +354,9 @@ void ECodeParser::ParseSub() {
 
 void ECodeParser::ParseDataStruct() {
     code.structs.resize(_buffer.ReadInt() >> 3);
-    for (auto & i : code.structs) {
-        i.key = ParseKey();
-        code.maps.emplace(i.key.value, &i);
+    for (auto & estruct : code.structs) {
+        estruct.key = ParseKey();
+        code.maps.emplace(estruct.key.value, &estruct);
     }
     _buffer.Skip(code.structs.size() * 4);
     for (auto & j : code.structs) {
@@ -556,7 +556,7 @@ ASTLoopPtr ECodeParser::ParseLoop(FileBuffer &buf) {
 
 ASTFunCallPtr ECodeParser::ParseFunCall(FileBuffer &buf) {
     ASTFunCallPtr ptr = make_ptr(ASTFunCall);
-    ptr->key.value = buf.ReadInt();
+    ptr->key = buf.ReadInt();
     ptr->lib = buf.ReadShort();
     ptr->unknown = buf.ReadShort();
     ptr->object = buf.ReadFixedData();

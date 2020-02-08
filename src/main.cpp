@@ -32,47 +32,36 @@ void initEE(std::unique_ptr<Module> Owner) {
         cerr << "Create Engine Error" << endl << ErrStr << endl;
     EE->finalizeObject();
 }
-int main() {
+int main(int count, const char **argv) {
     InitializeNativeTarget();
     InitializeNativeTargetAsmPrinter();
     InitializeNativeTargetAsmParser();
-
     FileBuffer buffer(R"(C:\Users\Administrator\Desktop\a.e)");
     ECodeParser parser(buffer);
     parser.Parse();
     EContext context(&parser.code);
-    for (auto &estruct : parser.code.structs) {
-        ECompiler::CreateStruct(context, &estruct);
-    }
-    for (auto &module : parser.code.modules) {
-        module.module = new Module(module.name.toString(), context.llvm);
-        for (auto &sub : module.include) {
-            auto *find = parser.code.find<ESub>(sub);
-            if (find) {
-                find->belong = &module;
-                ECompiler::CreateFunction(context, find);
-            }
-        }
-    }
     for (auto &module : parser.code.modules) {
         for (auto &sub : module.include) {
             auto *find = parser.code.find<ESub>(sub);
             if (find) {
-                DumpVisitor dump(&parser.code, find);
-                find->ast->accept(&dump);
-
+                if (find->attr.count("extern")) {
+                    break;
+                }
                 ECompiler compiler(context, find);
                 find->ast->accept(&compiler);
-
             }
         }
-        module.module->print(llvm::outs(), nullptr);
-        initEE(std::unique_ptr<Module>(module.module));
+        //initEE(std::unique_ptr<Module>(module.module));
     }
+    for (auto &module : parser.code.modules) {
+        module.module->print(llvm::outs(), nullptr);
+    }
+/*
     auto *func = EE->FindFunctionNamed("main");
     void *addr = EE->getPointerToFunction(func);
     typedef int (*FuncType)();
     auto mainFunc = (FuncType) addr;
     std::cout << "JIT result: " << mainFunc() << std::endl;
+*/
     return 0;
 }

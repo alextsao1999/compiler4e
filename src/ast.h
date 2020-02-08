@@ -18,7 +18,15 @@ Value *codegen(Visitor *visitor) override { return visitor->codegen(this); }\
 Value *codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
 #define AST_NODE(ast) struct AST##ast;using AST##ast##Ptr = std::shared_ptr<AST##ast>;struct AST##ast : public ASTNode
 
-enum KeyType : char {
+enum Property : uint32_t {
+    Property_Static = 1,
+    Property_Ref = 2,
+    Property_Nullable = 4,
+    Property_Array = 8,
+    Property_Public = 256,
+};
+
+enum KeyType : uint8_t {
     KeyType_None = 0,
     KeyType_Sub = 4,
     KeyType_Global = 5,
@@ -36,28 +44,28 @@ enum KeyType : char {
     KeyType_DllFunParam = 69,
     KeyType_Module = 73,
     KeyType_WindowRes = 82,
+    KeyType_BuildIn = 128,
 };
 
 struct Key {
     union {
         struct {
-            short index;
-            char code; // 不知道这个是干啥的
+            uint16_t index;
+            uint8_t code; // 不知道这个是干啥的
             KeyType type;
         };
-        int value;
+        uint32_t value;
         uint8_t part[4];
     };
 
     Key(int value) : value(value) {}
     Key() : value(0) {}
-    inline bool operator==(const Key &rhs) {
-        return value == rhs.value;
+    inline bool operator==(const int &rhs) { return value == rhs; }
+    inline bool operator==(const Key &rhs) { return value == rhs.value; }
+    inline bool operator<(const Key &rhs) { return value < rhs.value; }
+    void dump() {
+        printf("%u<%d, %d, %d>", value, type, code, index);
     }
-    inline bool operator<(const Key &rhs) {
-        return value < rhs.value;
-    }
-
 };
 
 struct EValue {

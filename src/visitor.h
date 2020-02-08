@@ -4,8 +4,6 @@
 
 #ifndef PARSE_E_FILE_VISITOR_H
 #define PARSE_E_FILE_VISITOR_H
-
-#include "llvm/IR/Value.h"
 struct ASTNode;
 struct ASTFunCall;
 struct ASTProgram;

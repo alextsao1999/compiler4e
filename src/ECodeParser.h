@@ -8,6 +8,9 @@
 using json = nlohmann::json;
 namespace llvm {
     class Value;
+    class Module;
+    class Type;
+    class Function;
 }
 using namespace llvm;
 #define assert(condition, str) \
@@ -24,7 +27,7 @@ using namespace llvm;
 #include "lib2.h"
 #include <unordered_map>
 #define NOT_REACHED() printf("not reached !! %s:%d\n", __FILE__, __LINE__);
-#define make_ptr(p, ...) std::make_shared<p>(__VA_ARGS__)
+#define make_ptr(p, ...) make_shared<p>(__VA_ARGS__)
 using namespace std;
 
 ostream &operator<<(ostream &os, Key &key);
@@ -45,12 +48,20 @@ struct BasicInfo {
     int version[2]{0, 0};
     int create[2]{0, 0};
 };
-
-struct EWindow {
+struct EBase {
     Key key;
-    Key belong;
     FixedData name;
     FixedData comment;
+    void dump() {
+        printf("%s ", name.toString().c_str());
+        key.dump();
+    }
+};
+struct EWindow : public EBase {
+    // Key key;
+    Key belong;
+    // FixedData name;
+    // FixedData comment;
     int left = 0;
     int top = 0;
     int width = 0;
@@ -84,28 +95,26 @@ struct EWindow {
     EWindow() = default;
 };
 
-struct EConst;
-
 struct ELibConst {
     int lib; // lib index
     int index; // constant index
 };
 
-struct EConst {
-    Key key;
+struct EConst : public EBase {
+    // Key key;
     short property = 0;
-    FixedData name;
-    FixedData comment;
+    // FixedData name;
+    // FixedData comment;
     FixedData data;
     EValue value;
 };
 
-struct EVar {
-    Key key;
+struct EVar : public EBase {
+    // Key key;
     Key type;
-    short property = 0;
-    FixedData name;
-    FixedData comment;
+    uint16_t property = 0;
+    // FixedData name;
+    // FixedData comment;
     std::vector<int> dimension;
     Value *value = nullptr;
 };
@@ -117,12 +126,12 @@ struct ELibrary {
 
 };
 
-struct EModule {
-    Key key;
+struct EModule : public EBase {
+    // Key key;
+    int property;
     Key base;
-    FixedData name;
-    FixedData comment;
-    int property = 0;
+    // FixedData name;
+    // FixedData comment;
     std::vector<Key> include;
     std::vector<EVar> vars;
     Module *module = nullptr;
@@ -136,37 +145,37 @@ struct EModule {
     }
 };
 
-struct ESub {
-    Key key;
+struct ESub : public EBase {
+    // Key key;
     int property = 0;
     int type = 0;
-    FixedData name;
-    FixedData comment;
+    // FixedData name;
+    // FixedData comment;
     FixedData code[6];
     std::vector<EVar> params;
     std::vector<EVar> locals;
     EModule *belong = nullptr; // 所属模块
     ASTProgramPtr ast = nullptr;
-    Value *value = nullptr;
+    Function *value = nullptr;
     json attr;
 };
 
-struct EStruct {
-    Key key;
+struct EStruct : public EBase {
+    // Key key;
     int property = 0;
-    FixedData name;
-    FixedData comment;
+    // FixedData name;
+    // FixedData comment;
     std::vector<EVar> members;
     Type *type = nullptr;
     json attr;
 };
 
-struct EDllSub {
-    Key key{};
-    int property{};
-    int type{};
-    FixedData name;
-    FixedData comment;
+struct EDllSub : public EBase {
+    // Key key;
+    int property = 0;
+    int type = 0;
+    // FixedData name;
+    // FixedData comment;
     FixedData lib;
     FixedData func;
     std::vector<EVar> params;
@@ -182,7 +191,7 @@ struct ECode {
     std::vector<EVar> globals; // 全局变量
     std::vector<EStruct> structs; // 自定义数据类型
     std::vector<EDllSub> dlls; // dll
-    std::unordered_map<int, void *> maps;
+    std::unordered_map<int, EBase *> maps;
     template <typename Type>
     inline Type *find(Key key) {
         return (Type *) maps[key.value];
