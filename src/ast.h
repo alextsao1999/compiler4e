@@ -14,7 +14,8 @@ namespace llvm {
 }
 using namespace llvm;
 #define AST_DECL() void accept(Visitor *visitor) override {visitor->enter(this);visitor->visit(this);visitor->leave(this);} \
-Value *codegen(Visitor *visitor) override { return visitor->codegen(this); }
+Value *codegen(Visitor *visitor) override { return visitor->codegen(this); }\
+Value *codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
 #define AST_NODE(ast) struct AST##ast;using AST##ast##Ptr = std::shared_ptr<AST##ast>;struct AST##ast : public ASTNode
 
 enum KeyType : char {
@@ -50,6 +51,12 @@ struct Key {
 
     Key(int value) : value(value) {}
     Key() : value(0) {}
+    inline bool operator==(const Key &rhs) {
+        return value == rhs.value;
+    }
+    inline bool operator<(const Key &rhs) {
+        return value < rhs.value;
+    }
 
 };
 
@@ -79,10 +86,18 @@ struct ASTNode {
         visitor->visit(this);
     };
     virtual Value *codegen(Visitor *visitor) = 0;
+    virtual Value *codegenLHS(Visitor *visitor) = 0;
     virtual int getType() { return 0; }
+    template <typename Class>
+    inline Class *cast() {
+        if (getType() != Class::Type) {
+            return nullptr;
+        }
+        return (Class *) this;
+    }
 };
 using ASTNodePtr = std::shared_ptr<ASTNode>;
-#define AST_TYPE(value) int getType() override { return value; }
+#define AST_TYPE(value) int getType() override { return value; };static constexpr int Type = value;
 AST_NODE(Args) {
     std::vector<ASTNodePtr> args;
     inline void AddArg(const ASTNodePtr &node) {

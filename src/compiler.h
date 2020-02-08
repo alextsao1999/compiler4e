@@ -19,22 +19,38 @@ struct EContext {
     EContext(ECode *code) : code(code) {}
 };
 class ECompiler : public Visitor {
-
 public:
     ECode *code;
     ESub *sub;
     IRBuilder<> builder;
     EContext& context;
     static void CreateStruct(EContext &context, EStruct *estruct) {
+        if (estruct->type) {
+            return;
+        }
+        std::string &&comment = estruct->comment.toString();
+        if (!comment.empty() && comment[0] == '#') {
+            estruct->attr = json::parse(comment.c_str() + 1);
+        }
         std::vector<Type *> elements(estruct->members.size());
         for (int i = 0; i < estruct->members.size(); ++i) {
             elements[i] = GetType(context, estruct->members[i].type);
+            if (elements[i] == nullptr) {
+                EStruct *find = context.code->find<EStruct>(estruct->members[i].type);
+                CreateStruct(context, find);
+                elements[i] = find->type;
+            }
         }
         auto *value = StructType::get(context.llvm, elements);
+        value->setName(estruct->name.toString());
         estruct->type = value;
     }
     static void CreateFunction(EContext &context, ESub *sub) {
-        std::string name = sub->name.toString();
+        std::string &&comment = sub->comment.toString();
+        if (!comment.empty() && comment.at(0) == '#') {
+            sub->attr = json::parse(comment.c_str() + 1);
+        }
+        std::string &&name = sub->name.toString();
         if (name == "_Æô¶¯×Ó³ÌÐò") {
             name.assign("main");
         }
@@ -44,6 +60,7 @@ public:
         }
         auto *functionType = FunctionType::get(GetType(context, sub->type), pts, false);
         Function *function = Function::Create(functionType, Function::ExternalLinkage, name, sub->belong->module);
+        //function->addFnAttr(Attribute::AttrKind::Alignment);
         sub->value = function;
     }
     static Type *GetType(EContext& context, Key key) {
@@ -73,7 +90,10 @@ public:
             }
         }
         if (key.type == KeyType::KeyType_DataStruct) {
-
+            auto *find = context.code->find<EStruct>(key);
+            if (find) {
+                return find->type;
+            }
         }
         if (key.type == KeyType::KeyType_Module) {
 
@@ -89,12 +109,16 @@ public:
         int i = 0;
         for (auto &arg : function->args()) {
             auto *alloc = lb.CreateAlloca(arg.getType(), nullptr);
-            lb.CreateStore(alloc, &arg);
+            lb.CreateStore(&arg, alloc);
             sub->params[i].value = alloc;
             i++;
         }
         for (auto &local : sub->locals) {
-            local.value = lb.CreateAlloca(getType(local.type), nullptr, local.name.toString());
+            Value *array = nullptr;
+            if (!local.dimension.empty()) {
+                array = lb.getInt32(local.dimension[0]);
+            }
+            local.value = lb.CreateAlloca(getType(local.type), array, local.name.toString());
         }
         builder.SetInsertPoint(entry);
     }
@@ -123,9 +147,9 @@ public:
                 if (node->args->args.size() < 2) {
                     return;
                 }
-                Value *var = node->args->args[0]->codegen(this);
+                Value *var = node->args->args[0]->codegenLHS(this);
                 Value *val = node->args->args[1]->codegen(this);
-                builder.CreateStore(var, val);
+                builder.CreateStore(val, var);
             }
 
         }
@@ -160,7 +184,36 @@ public:
                 break;
         }
     }
-
+    Value *LoadVar(Key key) {
+        EVar *var = code->find<EVar>(key);
+        if (var == nullptr || var ->value == nullptr) {
+            return builder.getInt32(0);
+        }
+        return builder.CreateLoad(var->value, var->name.toString());
+    }
+    Value *GetVar(Key key) {
+        EVar *var = code->find<EVar>(key);
+        if (!var) {
+            return nullptr;
+        }
+        return var->value;
+    }
+    Value *codegenLHS(ASTDot *node) override {
+        Value *var = node->var->codegenLHS(this);
+        if (node->field->getType() == ASTStructMember::Type) {
+            auto *field = node->field->cast<ASTStructMember>();
+            auto *find = context.code->find<EStruct>(field->key);
+            for (int i = 0; i < find->members.size(); ++i) {
+                if (find->members[i].key == field->member) {
+                    return builder.CreateStructGEP(var, i);
+                }
+            }
+        }
+        return var;
+    }
+    Value *codegenLHS(ASTVariable *node) override {
+        return GetVar(node->key);
+    }
     Value *codegen(ASTFunCall *node) override {
         using Bins = Instruction::BinaryOps;
         static std::map<std::string, Bins> binary = {
@@ -178,31 +231,41 @@ public:
                 if (node->args->args.size() < 2) {
                     return builder.getInt32(0);
                 }
-                Value *lhs = node->args->args[0]->codegen(this);
-                Value *rhs = node->args->args[1]->codegen(this);
-                return builder.CreateBinOp(binary[name], lhs, rhs, "temp");
+                auto ops = binary[name];
+                Value *lhs = nullptr;
+                for (int i = 0; i < node->args->args.size(); ++i) {
+                    Value *value = node->args->args[i]->codegen(this);
+                    if (lhs == nullptr) {
+                        lhs = value;
+                    } else {
+                        lhs = builder.CreateBinOp(binary[name], lhs, value, "temp");
+                    }
+                }
+                return lhs;
             }
         }
         if (node->key.type == KeyType_Sub) {
-            auto *sub = code->find<ESub>(node->key);
-            if (sub) {
-                printf("this is sub\n");
+            auto *find = code->find<ESub>(node->key);
+            if (find) {
                 std::vector<Value *> args(node->args->args.size());
                 int idx = 0;
                 for (auto &arg : node->args->args) {
                     args[idx] = node->args->args[idx]->codegen(this);
                     idx++;
                 }
-                return builder.CreateCall(sub->value, args);
+                return builder.CreateCall(find->value, args);
             }
         }
         return builder.getInt32(0);
-
     }
     Value *codegen(ASTLiteral *node) override {
         if (node->value.type == 1) {
             return builder.getInt32(node->value.val_int);
         }
+        if (node->value.type == 3) {
+            //return ;
+        }
+
         if (node->value.type == 5) {
             return builder.getInt32(node->value.val_double);
         }
@@ -210,17 +273,12 @@ public:
         return builder.getInt32(0);
     }
     Value *codegen(ASTVariable *node) override {
-        auto *var = code->find<EVar>(node->key);
-        if (node->key.type == KeyType_LocalOrParam) {
-            if (!var->value) {
-                return builder.getInt32(0);
-            }
-            return builder.CreateLoad(var->value, var->name.toString());
-        }
-        return builder.getInt32(0);
+        return LoadVar(node->key);
     }
-
+    Value *codegen(ASTDot *node) override {
+        Value *value = node->codegenLHS(this);
+        return builder.CreateLoad(value);
+    }
 };
-
 
 #endif //ECOMPILER_COMPILER_H

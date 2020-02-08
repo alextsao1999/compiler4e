@@ -4,6 +4,8 @@
 
 #ifndef PARSE_E_FILE_ECODEPARSER_H
 #define PARSE_E_FILE_ECODEPARSER_H
+#include "nlohmann/json.hpp"
+using json = nlohmann::json;
 namespace llvm {
     class Value;
 }
@@ -100,7 +102,7 @@ struct EConst {
 
 struct EVar {
     Key key;
-    int type = 0;
+    Key type;
     short property = 0;
     FixedData name;
     FixedData comment;
@@ -146,6 +148,7 @@ struct ESub {
     EModule *belong = nullptr; // 所属模块
     ASTProgramPtr ast = nullptr;
     Value *value = nullptr;
+    json attr;
 };
 
 struct EStruct {
@@ -155,6 +158,7 @@ struct EStruct {
     FixedData comment;
     std::vector<EVar> members;
     Type *type = nullptr;
+    json attr;
 };
 
 struct EDllSub {

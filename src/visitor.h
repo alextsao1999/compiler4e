@@ -50,6 +50,12 @@ struct Visitor {
     virtual void visit(ASTLoop *node) {}
     virtual void visit(ASTBrace *node) {}
     
+    virtual Value *codegenLHS(ASTNode *node) { return nullptr; }
+    virtual Value *codegenLHS(ASTFunCall *node) { return nullptr; }
+    virtual Value *codegenLHS(ASTDot *node) { return nullptr; }
+    virtual Value *codegenLHS(ASTVariable *node) { return nullptr; }
+    virtual Value *codegenLHS(ASTStructMember *node) { return nullptr; }
+
     virtual Value *codegen(ASTNode *node) { return nullptr; }
     virtual Value *codegen(ASTFunCall *node) { return nullptr; }
     virtual Value *codegen(ASTProgram *node) { return nullptr; }
