@@ -47,21 +47,26 @@ int main(int count, const char **argv) {
                 if (find->attr.count("extern")) {
                     break;
                 }
+/*
+                DumpVisitor dump(&parser.code, find);
+                find->ast->accept(&dump);
+                cout << "\n------------------------\n";
+*/
                 ECompiler compiler(context, find);
                 find->ast->accept(&compiler);
             }
         }
-        //initEE(std::unique_ptr<Module>(module.module));
     }
     for (auto &module : parser.code.modules) {
         module.module->print(llvm::outs(), nullptr);
+        //initEE(std::unique_ptr<Module>(module.module));
     }
-/*
-    auto *func = EE->FindFunctionNamed("main");
-    void *addr = EE->getPointerToFunction(func);
-    typedef int (*FuncType)();
-    auto mainFunc = (FuncType) addr;
-    std::cout << "JIT result: " << mainFunc() << std::endl;
-*/
+    if (EE) {
+        auto *func = EE->FindFunctionNamed("main");
+        void *addr = EE->getPointerToFunction(func);
+        typedef int (*FuncType)();
+        auto mainFunc = (FuncType) addr;
+        std::cout << "JIT result: " << mainFunc() << std::endl;
+    }
     return 0;
 }

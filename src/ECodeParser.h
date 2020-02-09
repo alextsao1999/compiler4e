@@ -52,7 +52,7 @@ struct EBase {
     Key key;
     FixedData name;
     FixedData comment;
-    void dump() {
+    virtual void dump() {
         printf("%s ", name.toString().c_str());
         key.dump();
     }
@@ -117,6 +117,23 @@ struct EVar : public EBase {
     // FixedData comment;
     std::vector<int> dimension;
     Value *value = nullptr;
+    inline bool isRef() { return (property & Property_Ref) == Property_Ref; }
+    inline bool isArray() { return (property & Property_Array) == Property_Array; }
+    inline bool isStatic() { return (property & Property_Static) == Property_Static; }
+    inline bool isPublic() { return (property & Property_Public) == Property_Public; }
+    inline bool isNullable() { return (property & Property_Nullable) == Property_Nullable; }
+
+    void dump() override {
+        if (isPublic())
+            printf("Public ");
+        if (isRef())
+            printf("Ref ");
+        if (isStatic())
+            printf("Static");
+        if (isArray())
+            printf("[]");
+        EBase::dump();
+    }
 };
 
 struct ELibrary {

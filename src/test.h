@@ -32,7 +32,7 @@ struct DumpVisitor : Visitor {
     void visit(ASTEnumConstant *node) override;
     void visit(ASTStructMember *node) override;
     void visit(ASTVariable *node) override;
-    void visit(ASTDot *node) override;
+    void visit(ASTPostfix *node) override;
     void visit(ASTJudge *node) override;
     void visit(ASTLoop *node) override;
     /**

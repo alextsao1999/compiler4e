@@ -18,7 +18,7 @@ Value *codegen(Visitor *visitor) override { return visitor->codegen(this); }\
 Value *codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
 #define AST_NODE(ast) struct AST##ast;using AST##ast##Ptr = std::shared_ptr<AST##ast>;struct AST##ast : public ASTNode
 
-enum Property : uint32_t {
+enum Property : uint16_t {
     Property_Static = 1,
     Property_Ref = 2,
     Property_Nullable = 4,
@@ -64,7 +64,7 @@ struct Key {
     inline bool operator==(const Key &rhs) { return value == rhs.value; }
     inline bool operator<(const Key &rhs) { return value < rhs.value; }
     void dump() {
-        printf("%u<%d, %d, %d>", value, type, code, index);
+        printf("%u<%d, %d, %d>\n", value, type, code, index);
     }
 };
 
@@ -222,10 +222,10 @@ AST_NODE(Variable) {
 
 };
 
-AST_NODE(Dot) {
+AST_NODE(Postfix) {
     ASTNodePtr var;
     ASTNodePtr field;
-    ASTDot(ASTNodePtr var, ASTNodePtr field) : var(std::move(var)), field(std::move(field)) {}
+    ASTPostfix(ASTNodePtr var, ASTNodePtr field) : var(std::move(var)), field(std::move(field)) {}
     AST_DECL();
     AST_TYPE(14);
 

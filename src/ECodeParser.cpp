@@ -609,7 +609,7 @@ ASTNodePtr ECodeParser::ParseNode(FileBuffer &buf, uint8_t type) {
             ASTNodePtr ast = make_ptr(ASTVariable, mark);
             uint8_t next;
             while ((next = buf.ReadByte()) != 55) {
-                ast = make_ptr(ASTDot, ast, ParseNode(buf, next));
+                ast = make_ptr(ASTPostfix, ast, ParseNode(buf, next));
             }
             return ast;
         }

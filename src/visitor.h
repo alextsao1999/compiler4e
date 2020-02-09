@@ -18,7 +18,7 @@ struct ASTSubscript;
 struct ASTEnumConstant;
 struct ASTStructMember;
 struct ASTVariable;
-struct ASTDot;
+struct ASTPostfix;
 struct ASTJudge;
 struct ASTLoop;
 struct ASTBrace;
@@ -43,14 +43,14 @@ struct Visitor {
     virtual void visit(ASTEnumConstant *node) {}
     virtual void visit(ASTStructMember *node) {}
     virtual void visit(ASTVariable *node) {}
-    virtual void visit(ASTDot *node) {}
+    virtual void visit(ASTPostfix *node) {}
     virtual void visit(ASTJudge *node) {}
     virtual void visit(ASTLoop *node) {}
     virtual void visit(ASTBrace *node) {}
     
     virtual Value *codegenLHS(ASTNode *node) { return nullptr; }
     virtual Value *codegenLHS(ASTFunCall *node) { return nullptr; }
-    virtual Value *codegenLHS(ASTDot *node) { return nullptr; }
+    virtual Value *codegenLHS(ASTPostfix *node) { return nullptr; }
     virtual Value *codegenLHS(ASTVariable *node) { return nullptr; }
     virtual Value *codegenLHS(ASTStructMember *node) { return nullptr; }
 
@@ -68,7 +68,7 @@ struct Visitor {
     virtual Value *codegen(ASTEnumConstant *node) { return nullptr; }
     virtual Value *codegen(ASTStructMember *node) { return nullptr; }
     virtual Value *codegen(ASTVariable *node) { return nullptr; }
-    virtual Value *codegen(ASTDot *node) { return nullptr; }
+    virtual Value *codegen(ASTPostfix *node) { return nullptr; }
     virtual Value *codegen(ASTJudge *node) { return nullptr; }
     virtual Value *codegen(ASTLoop *node) { return nullptr; }
     virtual Value *codegen(ASTBrace *node) { return nullptr; }

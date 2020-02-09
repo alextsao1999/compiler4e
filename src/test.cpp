@@ -180,7 +180,7 @@ void DumpVisitor::visit(ASTVariable *node) {
 
 }
 
-void DumpVisitor::visit(ASTDot *node) {
+void DumpVisitor::visit(ASTPostfix *node) {
     node->var->accept(this);
     node->field->accept(this);
 }
