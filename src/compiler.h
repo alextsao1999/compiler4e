@@ -7,11 +7,11 @@
 
 #include <set>
 #include "visitor.h"
+#include "test.h"
 #include "ECodeParser.h"
 #include "ast.h"
 #include "llvm/IR/IRBuilder.h"
-using namespace llvm;
-using namespace std;
+
 struct EContext {
     ECode *code = nullptr;
     LLVMContext llvm;
@@ -40,6 +40,7 @@ struct EContext {
             {"double", IntegerType::getDoubleTy(llvm)},
             {"bool", IntegerType::getInt1PtrTy(llvm)},
     };
+    std::map<string, string> translator;
     explicit EContext(ECode *code) : code(code) {
         for (auto &estruct : code->structs) {
             CreateStruct(&estruct);
@@ -96,12 +97,9 @@ struct EContext {
         if (estruct->type) {
             return;
         }
-        std::string &&comment = estruct->comment.toString();
-        if (!comment.empty() && comment[0] == '#') {
-            estruct->attr = json::parse(comment.c_str() + 1);
-        }
         std::vector<Type *> elements(estruct->members.size());
         for (int i = 0; i < estruct->members.size(); ++i) {
+            estruct->members[i].value.ref = estruct->members[i].isRef() + estruct->members[i].isArray();
             elements[i] = getType(estruct->members[i].type);
             if (elements[i] == nullptr) {
                 auto *find = code->find<EStruct>(estruct->members[i].type);
@@ -113,6 +111,7 @@ struct EContext {
             }
             if (!estruct->members[i].dimension.empty()) {
                 for (auto &value : estruct->members[i].dimension) {
+                    // TODO 数组维度
                     //elements[i] = ArrayType::get(elements[i], value);
                 }
             }
@@ -120,21 +119,34 @@ struct EContext {
         auto *value = StructType::get(llvm, elements);
         value->setName(estruct->name.toStringRef());
         estruct->type = value;
-        if (estruct->name == "String") {
-            types[SDT_TEXT] = value;
+        std::string &&comment = estruct->comment.toString();
+        if (!comment.empty()) {
+            if (comment[0] == '#') {
+                estruct->attr = json::parse(comment.c_str() + 1);
+            }
+            if (comment[0] == '@') {
+                if (comment == "@String") {
+                    types[SDT_TEXT] = value;
+                }
+            }
         }
     }
     void CreateFunction(ESub *sub) {
         std::string &&comment = sub->comment.toString();
-        if (!comment.empty() && comment.at(0) == '#') {
-            sub->attr = json::parse(comment.c_str() + 1);
+        if (!comment.empty()) {
+            if (comment[0] == '#') {
+                sub->attr = json::parse(comment.c_str() + 1);
+            }
+            if (comment[0] == '@') {
+                translator.emplace(comment.c_str() + 1, sub->name.toString());
+            }
         }
         std::string &&name = sub->name.toString();
         if (name == "_启动子程序") {
             name.assign("main");
         }
         std::vector<Type *> pts(sub->params.size());
-        for (int i = 0; i < sub->params.size(); ++i) {
+        for (uint32_t i = 0; i < sub->params.size(); ++i) {
             auto &&cmt = sub->params[i].comment.toString();
             if (!cmt.empty() && cmt[0] == '#') {
                 auto value = json::parse(cmt.c_str() + 1);
@@ -148,12 +160,13 @@ struct EContext {
                     pts[i] = pts[i]->getPointerTo(0);
                 }
             }
+            sub->params[i].value.ref = sub->params[i].isRef() + sub->params[i].isArray();
         }
-        auto *returnType = getType(sub->type);
+        sub->retType = getType(sub->type);
         if (sub->attr.count("type")) {
-            returnType = names[sub->attr["type"]];
+            sub->retType = names[sub->attr["type"]];
         }
-        auto *functionType = FunctionType::get(returnType, pts, sub->attr.count("va_args"));
+        auto *functionType = FunctionType::get(sub->retType, pts, sub->attr.count("va_args"));
         Function *function = Function::Create(functionType, Function::ExternalLinkage, name, sub->belong->module);
         //function->addFnAttr(Attribute::AttrKind::Alignment);
         sub->value = function;
@@ -167,27 +180,26 @@ public:
     IRBuilder<> builder;
     EContext& context;
     BasicBlock *current = nullptr;
-    vector<Value *> frees;
+    vector<EValue> frees;
+    DumpVisitor dumper;
     bool hasReturn = false;
-    map<string, string> translator = {
-            {"取文本长度", "String_Length"},
-    };
+
     explicit ECompiler(EContext &context, ESub *sub) :
-    context(context), builder(context.llvm), sub(sub) {
+            context(context), builder(context.llvm), sub(sub), dumper(context.code, sub) {
         code = context.code;
-        auto *function = (Function *) sub->value;
+        auto *function = sub->value;
         auto *entry = BasicBlock::Create(context.llvm, "entrypoint", function);
         IRBuilder<> lb(entry);
         int i = 0;
         for (auto &arg : function->args()) {
             auto *alloc = lb.CreateAlloca(arg.getType(), nullptr);
             lb.CreateStore(&arg, alloc);
+            sub->params[i].value.value = alloc;
             alloc->setName(sub->params[i].name.toStringRef());
-            sub->params[i].value = alloc;
             i++;
         }
         for (auto &local : sub->locals) {
-            Value *array = nullptr;
+            EValue array = nullptr;
             if (!local.dimension.empty()) {
                 array = lb.getInt32(local.dimension[0]);
             }
@@ -197,46 +209,6 @@ public:
     }
     Type *getType(Key key) {
         return context.getType(key);
-    }
-    void visit(ASTFunCall *node) override {
-        if (node->key.value == 0) {
-            return;
-        }
-        if (node->lib >= 0) {
-            auto &cmd = code->libraries[node->lib].info->m_pBeginCmdInfo[node->key.value];
-            std::string name((char *) cmd.m_szName);
-            if (name == "返回") {
-                if (node->args->args.size() < 1) {
-                    return;
-                }
-                Value *value = node->args->args[0]->codegen(this);
-                if (!value) {
-                    return;
-                }
-                Return(value);
-                return;
-            }
-            if (name == "赋值") {
-                if (node->args->args.size() < 2) {
-                    return;
-                }
-                Value *var = node->args->args[0]->codegenLHS(this);
-                Value *val = node->args->args[1]->codegen(this);
-                int var_bits = var->getType()->getPointerElementType()->getIntegerBitWidth();
-                int val_bits = val->getType()->getIntegerBitWidth();
-                if (var_bits > val_bits) {
-                    val = builder.CreateZExt(val, var->getType()->getPointerElementType());
-                }
-                if (var_bits < val_bits) {
-                    val = builder.CreateTrunc(val, var->getType()->getPointerElementType());
-                }
-                builder.CreateStore(val, var);
-                return;
-            }
-        }
-        if (node->key.type == KeyType_Sub) {
-            node->codegen(this);
-        }
     }
     void visit(ASTProgram *node) override {
         for (auto &stmt : node->stmts) {
@@ -277,7 +249,7 @@ public:
     }
     void visit(ASTIfStmt *node) override {
         auto *before = current;
-        Value *value = node->condition->codegen(this);
+        EValue value = node->condition->codegen(this);
         auto *leave = BasicBlock::Create(context.llvm, "leave");
         auto *then_block = BasicBlock::Create(context.llvm, "then");
         auto *else_block = node->else_block ? BasicBlock::Create(context.llvm, "else") : leave;
@@ -308,7 +280,7 @@ public:
         auto *loop = BasicBlock::Create(context.llvm, "loop");
         auto *leave = BasicBlock::Create(context.llvm, "leave");
         auto *before = current;
-        Value *counter = nullptr;
+        EValue counter = nullptr;
         current = leave;
         if (node->head->lib >= 0) {
             auto &cmd = code->libraries[node->head->lib].info->m_pBeginCmdInfo[node->head->key.value];
@@ -317,7 +289,7 @@ public:
                 builder.CreateBr(cond);
                 PushBasicBlock(cond);
                 builder.SetInsertPoint(cond);
-                Value *condition = node->head->args->args[0]->codegen(this);
+                EValue condition = node->head->args->args[0]->codegen(this);
                 builder.CreateCondBr(condition, loop, leave);
             }
             if (name == "计次循环首") {
@@ -326,9 +298,9 @@ public:
                 builder.CreateBr(cond);
                 PushBasicBlock(cond);
                 builder.SetInsertPoint(cond);
-                Value *value = node->head->args->args[0]->codegen(this);
-                Value *count = builder.CreateLoad(counter);
-                Value *cmp = builder.CreateICmp(CmpInst::ICMP_SLT, count, value);
+                EValue value = node->head->args->args[0]->codegen(this);
+                EValue count = builder.CreateLoad(counter);
+                EValue cmp = builder.CreateICmp(CmpInst::ICMP_SLT, count, value);
                 builder.CreateCondBr(cmp, loop, leave);
             }
             PushBasicBlock(loop);
@@ -336,14 +308,14 @@ public:
             if (node->block)
                 node->block->accept(this);
             if (counter) {
-                Value *value = builder.CreateAdd(builder.CreateLoad(counter), builder.getInt32(1));
+                EValue value = builder.CreateAdd(builder.CreateLoad(counter), builder.getInt32(1));
                 builder.CreateStore(value, counter);
             }
             builder.CreateBr(cond);
             if (name == "循环判断首") {
                 PushBasicBlock(cond);
                 builder.SetInsertPoint(cond);
-                Value *condition = node->tail->args->args[0]->codegen(this);
+                EValue condition = node->tail->args->args[0]->codegen(this);
                 builder.CreateCondBr(condition, loop, leave);
             }
             PushBasicBlock(leave);
@@ -351,43 +323,96 @@ public:
         }
         current = before;
     }
+    void visit(ASTFunCall *node) override {
+        if (node->key.value == 0) {
+            return;
+        }
+        if (node->lib >= 0) {
+            auto &cmd = code->libraries[node->lib].info->m_pBeginCmdInfo[node->key.value];
+            std::string name((char *) cmd.m_szName);
+            if (name == "返回") {
+                if (node->args->args.empty()) {
+                    Return();
+                } else {
+                    EValue value = node->args->args[0]->codegen(this);
+                    Return(value);
+                }
+                return;
+            }
+            if (name == "赋值") {
+                if (node->args->args.size() < 2) {
+                    return;
+                }
+                EValue var = node->args->args[0]->codegenLHS(this);
+                EValue val = node->args->args[1]->codegenLHS(this);
+                if (val == nullptr) {
+                    val = node->args->args[1]->codegen(this);
+                } else {
+                    if (var.getRef() && var.getRef()) {
+                        builder.CreateStore(val, var);
+                        return;
+                    }
+                    val.value = builder.CreateLoad(val.value);
+                }
 
-    Value *codegenLHS(ASTPostfix *node) override {
-        Value *var = node->var->codegenLHS(this);
+                uint32_t var_bits = var->getType()->getPointerElementType()->getIntegerBitWidth();
+                uint32_t val_bits = val->getType()->getIntegerBitWidth();
+                if (var_bits > val_bits) {
+                    val = builder.CreateZExt(val, var->getType()->getPointerElementType());
+                }
+                if (var_bits < val_bits) {
+                    val = builder.CreateTrunc(val, var->getType()->getPointerElementType());
+                }
+                builder.CreateStore(val, var);
+                return;
+            }
+        }
+        if (node->key.type == KeyType_Sub) {
+            node->codegen(this);
+        }
+    }
+
+    EValue codegenLHS(ASTPostfix *node) override {
+        EValue var = node->var->codegenLHS(this);
         if (node->field->getType() == ASTStructMember::Type) {
             auto *field = node->field->cast<ASTStructMember>();
             auto *find = context.code->find<EStruct>(field->key);
             for (int i = 0; i < find->members.size(); ++i) {
                 if (find->members[i].key == field->member) {
-                    return builder.CreateStructGEP(var, i);
+                    EValue value = find->members[i].value;
+                    value.value = builder.CreateStructGEP(var, i);
+                    return value;
                 }
             }
         }
         if (node->field->getType() == ASTSubscript::Type) {
             auto *field = node->field->cast<ASTSubscript>();
-            Value *value = field->value->codegen(this);
+            EValue value = field->value->codegen(this);
             return builder.CreateGEP(var, value);
         }
         return var;
     }
-    Value *codegenLHS(ASTVariable *node) override {
+    EValue codegenLHS(ASTVariable *node) override {
         EVar *var = code->find<EVar>(node->key);
         if (!var) {
-            var = code->find<EVar>(node->key.value - 2);
+            for (auto &local : sub->locals) {
+                if ((local.key.value | node->key.value) == node->key.value) {
+                    var = &local;
+                }
+            }
+            if (var == nullptr) {
+                Error("Cannot find the local!");
+                return builder.getInt32(0);
+            }
         }
-        Value *value = var->value;
-        if (value) {
-            if (var->isRef()) {
-                value = builder.CreateLoad(value);
-            }
-            if (var->isArray()) {
-                value = builder.CreateLoad(value);
-            }
+        EValue value = var->value;
+        for (int i = 0; i < value.getRef(); ++i) {
+            value.value = builder.CreateLoad(value.value);
         }
         return value;
     }
 
-    Value *codegen(ASTFunCall *node) override {
+    EValue codegen(ASTFunCall *node) override {
         using Bins = Instruction::BinaryOps;
         using Pred = CmpInst::Predicate;
         struct BinPair {
@@ -420,12 +445,9 @@ public:
                     return builder.getInt32(0);
                 }
                 auto ops = binary[name];
-                Value *lhs = nullptr;
+                EValue lhs = nullptr;
                 for (auto & arg : node->args->args) {
-                    if (arg->getType() == ASTVariable::Type) {
-
-                    }
-                    Value *value = arg->codegen(this);
+                    EValue value = arg->codegen(this);
                     if (lhs == nullptr) {
                         lhs = value;
                     } else {
@@ -447,8 +469,8 @@ public:
                 if (node->args->args.size() < 2) {
                     return builder.getInt32(0);
                 }
-                Value *lhs = node->args->args[0]->codegen(this);
-                Value *rhs = node->args->args[1]->codegen(this);
+                EValue lhs = node->args->args[0]->codegen(this);
+                EValue rhs = node->args->args[1]->codegen(this);
                 uint32_t lhs_bits = lhs->getType()->getIntegerBitWidth();
                 uint32_t rhs_bits = rhs->getType()->getIntegerBitWidth();
                 if (lhs_bits > rhs_bits) {
@@ -459,29 +481,22 @@ public:
                 }
                 return builder.CreateICmp(cmps[name], lhs, rhs, "cmp_temp");
             }
-            if (translator.count(name)) {
-                return CallFunctionArgs(translator[name].c_str(), node->args);
+            if (context.translator.count(name)) {
+                auto *find = context.get<ESub>(context.translator[name].c_str(), KeyType_Sub);
+                if (find) {
+                    return CreateCall(find, node->args.get());
+                }
             }
         }
         if (node->key.type == KeyType_Sub) {
             auto *find = code->find<ESub>(node->key);
             if (find) {
-                std::vector<Value *> args(node->args->args.size());
-                int idx = 0;
-                for (auto &arg : node->args->args) {
-                    if (find->params[idx].isRef()) {
-                        args[idx] = arg->codegenLHS(this);
-                    } else {
-                        args[idx] = arg->codegen(this);
-                    }
-                    idx++;
-                }
-                return builder.CreateCall(find->value, args);
+                return CreateCall(find, node->args.get());
             }
         }
         return builder.getInt32(0);
     }
-    Value *codegen(ASTLiteral *node) override {
+    EValue codegen(ASTLiteral *node) override {
         if (node->value.type == 1) {
             return builder.getInt32(node->value.val_int);
         }
@@ -502,67 +517,87 @@ public:
         }
         return builder.getInt32(node->value.val_time);
     }
-    Value *codegen(ASTVariable *node) override {
-        EVar *var = code->find<EVar>(node->key);
-        if (var == nullptr || var ->value == nullptr) {
-            return builder.getInt32(0);
-        }
-        Value *value = var->value;
-        if (var->type == SDT_TEXT) {
-            value = CallFunction("String_Get", value);
-        } else {
-            value = builder.CreateLoad(value, var->name.toString());
-        }
-        return value;
+    EValue codegen(ASTVariable *node) override {
+        EValue addr = node->codegenLHS(this);
+        return builder.CreateLoad(addr);
     }
-    Value *codegen(ASTPostfix *node) override {
-        Value *value = node->codegenLHS(this);
-        return builder.CreateLoad(value);
+    EValue codegen(ASTPostfix *node) override {
+        EValue value = node->codegenLHS(this);
+        return builder.CreateLoad(value.value);
     }
 
     template<typename ...Args>
-    Value *CallFunction(const char *name, Args ... args) {
+    EValue CallFunction(const char *name, Args ... args) {
         auto *find = context.get<ESub>(name, KeyType_Sub);
         if (find) {
-            Value *arg[] = {args...};
-            return builder.CreateCall(find->value, arg);
-        }
-        return builder.getInt32(0);
-    }
-    Value *CallFunctionArgs(const char *name, ASTArgsPtr args) {
-        auto *find = context.get<ESub>(name, KeyType_Sub);
-        if (find) {
-            vector<Value *> arg_list(args->args.size());
-            int index = 0;
-            for (auto &arg : args->args) {
-                if (find->params[index].isRef()) {
-                    arg_list[index] = arg->codegenLHS(this);
-                } else {
-                    arg_list[index] = arg->codegen(this);
-                }
-                index++;
-            }
+            Value *arg_list[] = {args...};
             return builder.CreateCall(find->value, arg_list);
         }
         return builder.getInt32(0);
     }
-    Value *StringCreate(Value *ptr) {
+    EValue CreateCall(ESub *func, ASTArgs *args) {
+        if (func) {
+            vector<Value *> arg_list(args->args.size());
+            int index = 0;
+            for (auto &arg : args->args) {
+                Type *arg_type = (func->value->arg_begin() + index)->getType();
+                if (func->params[index].isRef() || func->params[index].isArray()) {
+                    arg_list[index] = arg->codegenLHS(this);
+                } else {
+                    arg_list[index] = arg->codegen(this);
+                }
+                arg_list[index] = TypeCast(arg_list[index], arg_type);
+                index++;
+            }
+            return PushFree(builder.CreateCall(func->value, arg_list));
+        }
+        return builder.getInt32(0);
+    }
+    Value *TypeCast(EValue value, Type *cast_to) {
+        Type *type = value->getType();
+        if (type == cast_to) {
+            return value;
+        }
+        if (type == getType(SDT_TEXT)) {
+            if (cast_to == builder.getInt8PtrTy()) {
+                return CallFunction("String_CStr", value);
+            }
+        }
+        if (type == getType(SDT_TEXT)->getPointerTo()) {
+            if (cast_to == builder.getInt8PtrTy()) {
+                return CallFunction("String_CStr", value);
+            }
+        }
+        uint32_t bits = type->getIntegerBitWidth();
+        uint32_t to_bits = cast_to->getIntegerBitWidth();
+        if (bits < to_bits) {
+            value.value = builder.CreateZExt(value, cast_to);
+        }
+        if (bits > to_bits) {
+            value.value = builder.CreateTrunc(value, cast_to);
+        }
+        return value.value;
+
+    }
+    EValue StringCreate(EValue ptr) {
         return PushFree(CallFunction("String_Create", ptr));
     }
-    Value *StringAdd(Value *lhs, Value *rhs) {
+    EValue StringAdd(EValue lhs, EValue rhs) {
         return PushFree(CallFunction("String_Add", lhs, rhs));
     }
-    Value *StringFree(Value *value) {
+    EValue StringFree(EValue value) {
         return CallFunction("String_Free", value);
     }
-    Value *PushFree(Value *value) {
-        frees.push_back(value);
+    EValue PushFree(EValue value) {
+        if (value->getType() == getType(SDT_TEXT)) {
+            frees.push_back(value);
+        }
         return value;
     }
     void PushBasicBlock(BasicBlock *block) {
         sub->value->getBasicBlockList().push_back(block);
     }
-    void Return(Value *value = nullptr) {
+    void Return(EValue value = nullptr) {
         for (auto &tofree : frees) {
             if (tofree != value) {
                 StringFree(tofree);
@@ -576,10 +611,12 @@ public:
                 builder.CreateRetVoid();
             }
         } else {
-            builder.CreateRet(value);
+            builder.CreateRet(TypeCast(value, sub->retType));
         }
 
-
+    }
+    static void Error(const char *str, const char *file = __FILE__, int line = __LINE__) {
+        printf("%s\n in %s:%d ", str, file, line);
     }
 };
 

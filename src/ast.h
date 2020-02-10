@@ -9,13 +9,9 @@
 #include <memory>
 #include "visitor.h"
 #include "FileBuffer.h"
-namespace llvm {
-    class Value;
-}
-using namespace llvm;
 #define AST_DECL() void accept(Visitor *visitor) override {visitor->enter(this);visitor->visit(this);visitor->leave(this);} \
-Value *codegen(Visitor *visitor) override { return visitor->codegen(this); }\
-Value *codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
+EValue codegen(Visitor *visitor) override { return visitor->codegen(this); }\
+EValue codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
 #define AST_NODE(ast) struct AST##ast;using AST##ast##Ptr = std::shared_ptr<AST##ast>;struct AST##ast : public ASTNode
 
 enum Property : uint16_t {
@@ -68,7 +64,7 @@ struct Key {
     }
 };
 
-struct EValue {
+struct EConstant {
     int type{0};
     union {
         int val_int{};
@@ -77,14 +73,14 @@ struct EValue {
         long long val_time;
         FixedData val_string;
     };
-    explicit EValue() : type(0), val_int(0) {}
-    explicit EValue(int value) : type(1), val_int(value) {}
-    explicit EValue(bool value) : type(2), val_bool(value) {}
-    explicit EValue(FixedData value) : type(3), val_string(value) {
+    explicit EConstant() : type(0), val_int(0) {}
+    explicit EConstant(int value) : type(1), val_int(value) {}
+    explicit EConstant(bool value) : type(2), val_bool(value) {}
+    explicit EConstant(FixedData value) : type(3), val_string(value) {
         val_string.length--;
     }
-    explicit EValue(long long value) : type(4), val_time(value) {}
-    explicit EValue(double value) : type(5), val_double(value) {}
+    explicit EConstant(long long value) : type(4), val_time(value) {}
+    explicit EConstant(double value) : type(5), val_double(value) {}
 
 };
 
@@ -93,8 +89,8 @@ struct ASTNode {
     virtual void accept(Visitor *visitor) {
         visitor->visit(this);
     };
-    virtual Value *codegen(Visitor *visitor) = 0;
-    virtual Value *codegenLHS(Visitor *visitor) = 0;
+    virtual EValue codegen(Visitor *visitor) = 0;
+    virtual EValue codegenLHS(Visitor *visitor) = 0;
     virtual int getType() { return 0; }
     template <typename Class>
     inline Class *cast() {
@@ -158,8 +154,8 @@ AST_NODE(IfStmt) {
 };
 
 AST_NODE(Literal) {
-    EValue value;
-    explicit ASTLiteral(const EValue &value) : value(value) {}
+    EConstant value;
+    explicit ASTLiteral(const EConstant &value) : value(value) {}
     AST_DECL();
     AST_TYPE(6);
 };

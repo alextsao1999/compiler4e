@@ -58,8 +58,8 @@ int main(int count, const char **argv) {
         }
     }
     for (auto &module : parser.code.modules) {
-        module.module->print(llvm::outs(), nullptr);
-        //initEE(std::unique_ptr<Module>(module.module));
+        module.module->print(llvm::errs(), nullptr);
+        initEE(std::unique_ptr<Module>(module.module));
     }
     if (EE) {
         auto *func = EE->FindFunctionNamed("main");

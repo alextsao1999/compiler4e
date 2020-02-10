@@ -393,34 +393,34 @@ void ECodeParser::ParseAST() {
     }
 }
 
-EValue ECodeParser::ParseValue(FileBuffer &buf, uint8_t type) {
+EConstant ECodeParser::ParseValue(FileBuffer &buf, uint8_t type) {
     switch (type) {
         case 22:
             // 空值
-            return EValue();
+            return EConstant();
         case 23:
         {
             // double
             FixedData data = buf.Read(8);
-            return EValue(*((double *) data.data));
+            return EConstant(*((double *) data.data));
         }
         case 59:
-            return EValue(buf.ReadInt());
+            return EConstant(buf.ReadInt());
             // int
         case 24:
             // 逻辑
-            return EValue(buf.ReadShort() != 0);
+            return EConstant(buf.ReadShort() != 0);
         case 25:
         {
             // 日期时间
             FixedData data = buf.Read(8);
-            return EValue(*((long long *) data.data));
+            return EConstant(*((long long *) data.data));
         }
         case 26:
             // 文本
-            return EValue(buf.ReadFixedData());
+            return EConstant(buf.ReadFixedData());
         default:
-            return EValue();
+            return EConstant();
     }
 }
 

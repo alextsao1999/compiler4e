@@ -4,6 +4,7 @@
 
 #ifndef PARSE_E_FILE_VISITOR_H
 #define PARSE_E_FILE_VISITOR_H
+#include <cstdint>
 struct ASTNode;
 struct ASTFunCall;
 struct ASTProgram;
@@ -24,8 +25,18 @@ struct ASTLoop;
 struct ASTBrace;
 namespace llvm {
     class Value;
+    class Type;
 }
 using namespace llvm;
+//typedef Value *EValue;
+struct EValue {
+    Value *value;
+    uint32_t ref = false;
+    EValue (Value *value = nullptr) : value(value) {}
+    inline operator Value*() { return value; }
+    inline Value *operator->() { return value; }
+    inline uint32_t getRef() { return ref; }
+};
 struct Visitor {
     virtual void enter(ASTNode *node) {}
     virtual void leave(ASTNode *node) {}
@@ -48,30 +59,30 @@ struct Visitor {
     virtual void visit(ASTLoop *node) {}
     virtual void visit(ASTBrace *node) {}
     
-    virtual Value *codegenLHS(ASTNode *node) { return nullptr; }
-    virtual Value *codegenLHS(ASTFunCall *node) { return nullptr; }
-    virtual Value *codegenLHS(ASTPostfix *node) { return nullptr; }
-    virtual Value *codegenLHS(ASTVariable *node) { return nullptr; }
-    virtual Value *codegenLHS(ASTStructMember *node) { return nullptr; }
+    virtual EValue codegenLHS(ASTNode *node) { return nullptr; }
+    virtual EValue codegenLHS(ASTFunCall *node) { return nullptr; }
+    virtual EValue codegenLHS(ASTPostfix *node) { return nullptr; }
+    virtual EValue codegenLHS(ASTVariable *node) { return nullptr; }
+    virtual EValue codegenLHS(ASTStructMember *node) { return nullptr; }
 
-    virtual Value *codegen(ASTNode *node) { return nullptr; }
-    virtual Value *codegen(ASTFunCall *node) { return nullptr; }
-    virtual Value *codegen(ASTProgram *node) { return nullptr; }
-    virtual Value *codegen(ASTArgs *node) { return nullptr; }
-    virtual Value *codegen(ASTBlock *node) { return nullptr; }
-    virtual Value *codegen(ASTIfStmt *node) { return nullptr; }
-    virtual Value *codegen(ASTLiteral *node) { return nullptr; }
-    virtual Value *codegen(ASTConstant *node) { return nullptr; }
-    virtual Value *codegen(ASTLibConstant *node) { return nullptr; }
-    virtual Value *codegen(ASTAddress *node) { return nullptr; }
-    virtual Value *codegen(ASTSubscript *node) { return nullptr; }
-    virtual Value *codegen(ASTEnumConstant *node) { return nullptr; }
-    virtual Value *codegen(ASTStructMember *node) { return nullptr; }
-    virtual Value *codegen(ASTVariable *node) { return nullptr; }
-    virtual Value *codegen(ASTPostfix *node) { return nullptr; }
-    virtual Value *codegen(ASTJudge *node) { return nullptr; }
-    virtual Value *codegen(ASTLoop *node) { return nullptr; }
-    virtual Value *codegen(ASTBrace *node) { return nullptr; }
+    virtual EValue codegen(ASTNode *node) { return nullptr; }
+    virtual EValue codegen(ASTFunCall *node) { return nullptr; }
+    virtual EValue codegen(ASTProgram *node) { return nullptr; }
+    virtual EValue codegen(ASTArgs *node) { return nullptr; }
+    virtual EValue codegen(ASTBlock *node) { return nullptr; }
+    virtual EValue codegen(ASTIfStmt *node) { return nullptr; }
+    virtual EValue codegen(ASTLiteral *node) { return nullptr; }
+    virtual EValue codegen(ASTConstant *node) { return nullptr; }
+    virtual EValue codegen(ASTLibConstant *node) { return nullptr; }
+    virtual EValue codegen(ASTAddress *node) { return nullptr; }
+    virtual EValue codegen(ASTSubscript *node) { return nullptr; }
+    virtual EValue codegen(ASTEnumConstant *node) { return nullptr; }
+    virtual EValue codegen(ASTStructMember *node) { return nullptr; }
+    virtual EValue codegen(ASTVariable *node) { return nullptr; }
+    virtual EValue codegen(ASTPostfix *node) { return nullptr; }
+    virtual EValue codegen(ASTJudge *node) { return nullptr; }
+    virtual EValue codegen(ASTLoop *node) { return nullptr; }
+    virtual EValue codegen(ASTBrace *node) { return nullptr; }
 
 };
 

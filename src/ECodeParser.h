@@ -106,7 +106,7 @@ struct EConst : public EBase {
     // FixedData name;
     // FixedData comment;
     FixedData data;
-    EValue value;
+    EConstant value;
 };
 
 struct EVar : public EBase {
@@ -116,7 +116,7 @@ struct EVar : public EBase {
     // FixedData name;
     // FixedData comment;
     std::vector<int> dimension;
-    Value *value = nullptr;
+    EValue value = nullptr;
     inline bool isRef() { return (property & Property_Ref) == Property_Ref; }
     inline bool isArray() { return (property & Property_Array) == Property_Array; }
     inline bool isStatic() { return (property & Property_Static) == Property_Static; }
@@ -174,6 +174,7 @@ struct ESub : public EBase {
     EModule *belong = nullptr; // 所属模块
     ASTProgramPtr ast = nullptr;
     Function *value = nullptr;
+    Type *retType = nullptr;
     json attr;
 };
 
@@ -263,7 +264,7 @@ private:
     void ParseDataStruct();
     void ParseDll();
     void ParseAST();
-    EValue ParseValue(FileBuffer &buf, uint8_t type);
+    EConstant ParseValue(FileBuffer &buf, uint8_t type);
     ASTProgramPtr ParseSubCode(FileBuffer &buf);;
     ASTNodePtr ParseLineNode(FileBuffer &buf, uint8_t type);
     ASTIfStmtPtr ParseIf(FileBuffer &buf);

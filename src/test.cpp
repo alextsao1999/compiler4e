@@ -48,7 +48,8 @@ void DumpVisitor::visit(ASTFunCall *node) {
         return;
     }
     if (node->lib >= 0) {
-        cout << (const char *) code->libraries[node->lib].info->m_pBeginCmdInfo[node->key.value].m_szName;
+        auto *str = (const char *) code->libraries[node->lib].info->m_pBeginCmdInfo[node->key.value].m_szName;
+        cout << str;
         node->args->accept(this);
         return;
     }
