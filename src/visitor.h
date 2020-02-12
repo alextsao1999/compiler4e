@@ -37,54 +37,35 @@ struct EValue {
     inline Value *operator->() { return value; }
     inline uint32_t getRef() { return ref; }
 };
+
+#define AST_METHOD(METHOD, RET, RETVAL)     \
+virtual RET METHOD(ASTNode *node) { return RETVAL; } \
+virtual RET METHOD(ASTFunCall *node) { return RETVAL; } \
+virtual RET METHOD(ASTProgram *node) { return RETVAL; } \
+virtual RET METHOD(ASTArgs *node) { return RETVAL; } \
+virtual RET METHOD(ASTBlock *node) { return RETVAL; } \
+virtual RET METHOD(ASTIfStmt *node) { return RETVAL; } \
+virtual RET METHOD(ASTLiteral *node) { return RETVAL; } \
+virtual RET METHOD(ASTConstant *node) { return RETVAL; } \
+virtual RET METHOD(ASTLibConstant *node) { return RETVAL; } \
+virtual RET METHOD(ASTAddress *node) { return RETVAL; } \
+virtual RET METHOD(ASTSubscript *node) { return RETVAL; } \
+virtual RET METHOD(ASTEnumConstant *node) { return RETVAL; } \
+virtual RET METHOD(ASTStructMember *node) { return RETVAL; } \
+virtual RET METHOD(ASTVariable *node) { return RETVAL; } \
+virtual RET METHOD(ASTPostfix *node) { return RETVAL; } \
+virtual RET METHOD(ASTJudge *node) { return RETVAL; } \
+virtual RET METHOD(ASTLoop *node) { return RETVAL; } \
+virtual RET METHOD(ASTBrace *node) { return RETVAL; }
+
 struct Visitor {
     virtual void enter(ASTNode *node) {}
     virtual void leave(ASTNode *node) {}
-    virtual void visit(ASTNode *node) {}
-    virtual void visit(ASTFunCall *node) {}
-    virtual void visit(ASTProgram *node) {}
-    virtual void visit(ASTArgs *node) {}
-    virtual void visit(ASTBlock *node) {}
-    virtual void visit(ASTIfStmt *node) {}
-    virtual void visit(ASTLiteral *node) {}
-    virtual void visit(ASTConstant *node) {}
-    virtual void visit(ASTLibConstant *node) {}
-    virtual void visit(ASTAddress *node) {}
-    virtual void visit(ASTSubscript *node) {}
-    virtual void visit(ASTEnumConstant *node) {}
-    virtual void visit(ASTStructMember *node) {}
-    virtual void visit(ASTVariable *node) {}
-    virtual void visit(ASTPostfix *node) {}
-    virtual void visit(ASTJudge *node) {}
-    virtual void visit(ASTLoop *node) {}
-    virtual void visit(ASTBrace *node) {}
-    
-    virtual EValue codegenLHS(ASTNode *node) { return nullptr; }
-    virtual EValue codegenLHS(ASTFunCall *node) { return nullptr; }
-    virtual EValue codegenLHS(ASTPostfix *node) { return nullptr; }
-    virtual EValue codegenLHS(ASTVariable *node) { return nullptr; }
-    virtual EValue codegenLHS(ASTStructMember *node) { return nullptr; }
-
-    virtual EValue codegen(ASTNode *node) { return nullptr; }
-    virtual EValue codegen(ASTFunCall *node) { return nullptr; }
-    virtual EValue codegen(ASTProgram *node) { return nullptr; }
-    virtual EValue codegen(ASTArgs *node) { return nullptr; }
-    virtual EValue codegen(ASTBlock *node) { return nullptr; }
-    virtual EValue codegen(ASTIfStmt *node) { return nullptr; }
-    virtual EValue codegen(ASTLiteral *node) { return nullptr; }
-    virtual EValue codegen(ASTConstant *node) { return nullptr; }
-    virtual EValue codegen(ASTLibConstant *node) { return nullptr; }
-    virtual EValue codegen(ASTAddress *node) { return nullptr; }
-    virtual EValue codegen(ASTSubscript *node) { return nullptr; }
-    virtual EValue codegen(ASTEnumConstant *node) { return nullptr; }
-    virtual EValue codegen(ASTStructMember *node) { return nullptr; }
-    virtual EValue codegen(ASTVariable *node) { return nullptr; }
-    virtual EValue codegen(ASTPostfix *node) { return nullptr; }
-    virtual EValue codegen(ASTJudge *node) { return nullptr; }
-    virtual EValue codegen(ASTLoop *node) { return nullptr; }
-    virtual EValue codegen(ASTBrace *node) { return nullptr; }
+    AST_METHOD(codegen, EValue, nullptr);
+    AST_METHOD(codegenLHS, EValue, nullptr);
+    AST_METHOD(visit, void, void());
+    AST_METHOD(type, Type *, nullptr);
 
 };
-
 
 #endif //PARSE_E_FILE_VISITOR_H

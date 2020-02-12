@@ -47,18 +47,13 @@ int main(int count, const char **argv) {
                 if (find->attr.count("extern")) {
                     break;
                 }
-/*
-                DumpVisitor dump(&parser.code, find);
-                find->ast->accept(&dump);
-                cout << "\n------------------------\n";
-*/
                 ECompiler compiler(context, find);
                 find->ast->accept(&compiler);
             }
         }
     }
     for (auto &module : parser.code.modules) {
-        module.module->print(llvm::errs(), nullptr);
+        module.module->print(llvm::outs(), nullptr);
         initEE(std::unique_ptr<Module>(module.module));
     }
     if (EE) {

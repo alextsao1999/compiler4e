@@ -15,6 +15,7 @@
 struct EContext {
     ECode *code = nullptr;
     LLVMContext llvm;
+    Module *dlls;
     std::map<int, Type *> types = {
             {SDT_BYTE,      IntegerType::getInt8Ty(llvm)},
             {SDT_SHORT,     IntegerType::getInt16Ty(llvm)},
@@ -27,7 +28,7 @@ struct EContext {
             {SDT_TEXT,      IntegerType::getInt8PtrTy(llvm)},
             {SDT_BIN,       IntegerType::getInt8PtrTy(llvm)},
             {SDT_SUB_PTR,   IntegerType::getInt8PtrTy(llvm)},
-            {SDT_STATMENT,  IntegerType::getInt8PtrTy(llvm)}
+            {SDT_STATMENT,  IntegerType::getInt8PtrTy(llvm)},
     };
     std::map<string, Type *> names = {
             {"char*", IntegerType::getInt8PtrTy(llvm)},
@@ -42,11 +43,15 @@ struct EContext {
     };
     std::map<string, string> translator;
     explicit EContext(ECode *code) : code(code) {
+        dlls = new Module("DllImport", llvm);
         for (auto &estruct : code->structs) {
             CreateStruct(&estruct);
         }
+        for (auto &dll : code->dlls) {
+            CreateDll(&dll);
+        }
         for (auto &module : code->modules) {
-            module.module = new Module(module.name.toStringRef(), llvm);
+            module.module = dlls;//new Module(module.name.toStringRef(), llvm);
             for (auto &sub : module.include) {
                 auto *find = code->find<ESub>(sub);
                 if (find) {
@@ -116,8 +121,8 @@ struct EContext {
                 }
             }
         }
-        auto *value = StructType::get(llvm, elements);
-        value->setName(estruct->name.toStringRef());
+        auto *value = StructType::create(llvm, elements, estruct->name.toStringRef());
+        //value->setName(estruct->name.toStringRef());
         estruct->type = value;
         std::string &&comment = estruct->comment.toString();
         if (!comment.empty()) {
@@ -127,6 +132,9 @@ struct EContext {
             if (comment[0] == '@') {
                 if (comment == "@String") {
                     types[SDT_TEXT] = value;
+                }
+                if (comment == "@All") {
+                    types[_SDT_ALL] = value;
                 }
             }
         }
@@ -170,6 +178,55 @@ struct EContext {
         Function *function = Function::Create(functionType, Function::ExternalLinkage, name, sub->belong->module);
         //function->addFnAttr(Attribute::AttrKind::Alignment);
         sub->value = function;
+        SetSubSignature(sub);
+    }
+    void CreateDll(EDllSub *dll) {
+        std::vector<Type *> pts(dll->params.size());
+        for (uint32_t i = 0; i < dll->params.size(); ++i) {
+            dll->params[i].value.ref = dll->params[i].isRef() + dll->params[i].isArray();
+            auto &&cmt = dll->params[i].comment.toString();
+            if (!cmt.empty() && cmt[0] == '#') {
+                auto value = json::parse(cmt.c_str() + 1);
+                pts[i] = names[value["type"]];
+            } else {
+                if (dll->params[i].type == SDT_TEXT) {
+                    pts[i] = IntegerType::get(llvm, 8);
+                } else {
+                    pts[i] = getType(dll->params[i].type);
+                }
+            }
+            for (uint32_t j = 0; j < dll->params[i].value.ref; ++j) {
+                pts[i] = pts[i]->getPointerTo(0);
+            }
+        }
+        auto *ret = getType(dll->type);
+        auto *type = FunctionType::get(ret, pts, false);
+        auto *func = Function::Create(type, Function::ExternalLinkage, dll->name.toString(), dlls);
+        func->setDLLStorageClass(Function::DLLImportStorageClass);
+        dll->value = func;
+    }
+    static void SetSubSignature(ESub *sub) {
+        sub->signature = sub->name.toString();
+        sub->signature.append("(");
+        size_t i = 0;
+        for (auto &arg : sub->value->args()) {
+            i++;
+            sub->signature.append(GetTypeString(arg.getType()));
+            if (i < sub->value->arg_size()) {
+                sub->signature.append(",");
+            }
+        }
+        sub->signature.append(")");
+        //printf("func sig -> %s\n", sub->signature.c_str());
+    }
+    static string GetTypeString(Type *type) {
+        if (type == nullptr) {
+            return {};
+        }
+        std::string type_str;
+        llvm::raw_string_ostream rso(type_str);
+        type->print(rso, false, true);
+        return rso.str();
     }
 
 };
@@ -189,23 +246,32 @@ public:
         code = context.code;
         auto *function = sub->value;
         auto *entry = BasicBlock::Create(context.llvm, "entrypoint", function);
-        IRBuilder<> lb(entry);
+        builder.SetInsertPoint(entry);
         int i = 0;
         for (auto &arg : function->args()) {
-            auto *alloc = lb.CreateAlloca(arg.getType(), nullptr);
-            lb.CreateStore(&arg, alloc);
+            auto *alloc = builder.CreateAlloca(arg.getType(), nullptr);
+            //builder.CreateStore(&arg, alloc);
             sub->params[i].value.value = alloc;
             alloc->setName(sub->params[i].name.toStringRef());
+            i++;
+        }
+        i = 0;
+        for (auto &arg : function->args()) {
+            builder.CreateStore(&arg, sub->params[i].value);
             i++;
         }
         for (auto &local : sub->locals) {
             EValue array = nullptr;
             if (!local.dimension.empty()) {
-                array = lb.getInt32(local.dimension[0]);
+                array = builder.getInt32(local.dimension[0]);
             }
-            local.value = lb.CreateAlloca(getType(local.type), array, local.name.toString());
+            local.value = builder.CreateAlloca(getType(local.type), array, local.name.toString());
+            //LocalValueInit(local.value);
         }
-        builder.SetInsertPoint(entry);
+        for (auto &local : sub->locals) {
+            LocalValueInit(local.value);
+        }
+
     }
     Type *getType(Key key) {
         return context.getType(key);
@@ -343,31 +409,63 @@ public:
                 if (node->args->args.size() < 2) {
                     return;
                 }
-                EValue var = node->args->args[0]->codegenLHS(this);
-                EValue val = node->args->args[1]->codegenLHS(this);
-                if (val == nullptr) {
-                    val = node->args->args[1]->codegen(this);
-                } else {
-                    if (var.getRef() && var.getRef()) {
+
+/*
+                node->accept(&dumper);
+                printf(" [%s = %s] \n",
+                        EContext::GetTypeString(node->args->args[0]->type(this)).c_str(),
+                        EContext::GetTypeString(node->args->args[1]->type(this)).c_str()
+                        );
+*/
+
+                Type *var_type = node->args->args[0]->type(this);
+                Type *val_type = node->args->args[1]->type(this);
+                if (var_type == builder.getInt8PtrTy()) {
+                    EValue var = node->args->args[0]->codegenLHS(this);
+                    if (val_type == builder.getInt8PtrTy()) {
+                        EValue val = node->args->args[1]->codegenLHS(this);
                         builder.CreateStore(val, var);
-                        return;
                     }
-                    val.value = builder.CreateLoad(val.value);
+                    return;
                 }
 
-                uint32_t var_bits = var->getType()->getPointerElementType()->getIntegerBitWidth();
-                uint32_t val_bits = val->getType()->getIntegerBitWidth();
+/*
+                if (var_type == builder.getInt8PtrTy()) {
+                    EValue var = node->args->args[0]->codegenLHS(this);
+                    if (val_type == builder.getInt8PtrTy()) {
+                        EValue val = node->args->args[1]->codegenLHS(this);
+                        builder.CreateStore(val, var);
+                    }
+                    if (val_type == builder.getInt32Ty()) {
+                        EValue val = node->args->args[1]->codegen(this);
+                        builder.CreateStore(TypeCast(val, builder.getInt8PtrTy()), var);
+                    }
+                    return;
+                }
+*/
+                EValue var = node->args->args[0]->codegenLHS(this);
+                EValue val = node->args->args[1]->codegen(this);
+                if (var_type == getType(SDT_TEXT)) {
+                    StringCopy(var, val);
+                    return;
+                }
+                builder.CreateStore(TypeCast(val, var_type), var);
+
+/*
+                uint32_t var_bits = var_type->getIntegerBitWidth();
+                uint32_t val_bits = val_type->getIntegerBitWidth();
                 if (var_bits > val_bits) {
                     val = builder.CreateZExt(val, var->getType()->getPointerElementType());
                 }
                 if (var_bits < val_bits) {
                     val = builder.CreateTrunc(val, var->getType()->getPointerElementType());
                 }
-                builder.CreateStore(val, var);
+                builder.CreateStore(TypeCast(val, var->getType()), var);
+*/
                 return;
             }
         }
-        if (node->key.type == KeyType_Sub) {
+        if (node->key.type == KeyType_Sub || node->key.type == KeyType_DllFunc) {
             node->codegen(this);
         }
     }
@@ -380,7 +478,7 @@ public:
             for (int i = 0; i < find->members.size(); ++i) {
                 if (find->members[i].key == field->member) {
                     EValue value = find->members[i].value;
-                    value.value = builder.CreateStructGEP(var, i);
+                    value.value = builder.CreateStructGEP(var, i, {"addr.", find->members[i].name.toStringRef()});
                     return value;
                 }
             }
@@ -388,7 +486,7 @@ public:
         if (node->field->getType() == ASTSubscript::Type) {
             auto *field = node->field->cast<ASTSubscript>();
             EValue value = field->value->codegen(this);
-            return builder.CreateGEP(var, value);
+            return builder.CreateGEP(var, value, "addr");
         }
         return var;
     }
@@ -400,18 +498,14 @@ public:
                     var = &local;
                 }
             }
-            if (var == nullptr) {
-                Error("Cannot find the local!");
-                return builder.getInt32(0);
-            }
+            ASSERT(var, "Cannot find the local!");
         }
         EValue value = var->value;
-        for (int i = 0; i < value.getRef(); ++i) {
+        for (uint32_t i = 0; i < value.getRef(); ++i) {
             value.value = builder.CreateLoad(value.value);
         }
         return value;
     }
-
     EValue codegen(ASTFunCall *node) override {
         using Bins = Instruction::BinaryOps;
         using Pred = CmpInst::Predicate;
@@ -445,22 +539,31 @@ public:
                     return builder.getInt32(0);
                 }
                 auto ops = binary[name];
+/*
+                node->accept(&dumper);
+                printf("  ");
+*/
                 EValue lhs = nullptr;
                 for (auto & arg : node->args->args) {
-                    EValue value = arg->codegen(this);
+                    Value *value = nullptr;
+                    auto *type = arg->type(this);
+                    value = arg->codegen(this);
+                    if (type == builder.getInt8PtrTy()) {
+                        value = TypeCast(value, getType(SDT_TEXT)->getPointerTo());
+                    }
                     if (lhs == nullptr) {
                         lhs = value;
+                        continue;
+                    }
+                    type = value->getType();
+                    if (type == getType(SDT_INT)) {
+                        lhs = builder.CreateBinOp(ops.iOp, lhs, value, "temp");
+                    } else if (type == getType(SDT_FLOAT)) {
+                        lhs = builder.CreateBinOp(ops.fOp, lhs, value, "temp");
+                    } else if (type == getType(SDT_TEXT)->getPointerTo()) {
+                        lhs = StringAdd(lhs, value);
                     } else {
-                        auto *type = lhs->getType();
-                        if (type == getType(SDT_INT)) {
-                            lhs = builder.CreateBinOp(binary[name].iOp, lhs, value, "temp");
-                        } else if (type == getType(SDT_FLOAT)) {
-                            lhs = builder.CreateBinOp(binary[name].fOp, lhs, value, "temp");
-                        } else if (type == getType(SDT_TEXT)) {
-                            lhs = StringAdd(lhs, value);
-                        } else {
-                            lhs = builder.CreateBinOp(binary[name].iOp, lhs, value, "temp");
-                        }
+                        lhs = builder.CreateBinOp(binary[name].iOp, lhs, value, "temp");
                     }
                 }
                 return lhs;
@@ -494,6 +597,13 @@ public:
                 return CreateCall(find, node->args.get());
             }
         }
+        if (node->key.type == KeyType_DllFunc) {
+
+            auto *find = code->find<EDllSub>(node->key);
+            if (find) {
+                return CreateCall(find, node->args.get());
+            }
+        }
         return builder.getInt32(0);
     }
     EValue codegen(ASTLiteral *node) override {
@@ -509,9 +619,8 @@ public:
             //auto *global = new GlobalVariable(*sub->belong->module, data->getType(), true, GlobalValue::PrivateLinkage, data);
             Value *zero = builder.getInt32(0);
             Value *idxs[] = {zero, zero};
-            return StringCreate(builder.CreateInBoundsGEP(global, idxs));
+            return builder.CreateInBoundsGEP(global, idxs);
         }
-
         if (node->value.type == 5) {
             return builder.getInt32(node->value.val_double);
         }
@@ -519,6 +628,9 @@ public:
     }
     EValue codegen(ASTVariable *node) override {
         EValue addr = node->codegenLHS(this);
+        if (node->type(this) == getType(SDT_TEXT)) {
+            return addr;
+        }
         return builder.CreateLoad(addr);
     }
     EValue codegen(ASTPostfix *node) override {
@@ -526,12 +638,76 @@ public:
         return builder.CreateLoad(value.value);
     }
 
+    Type *type(ASTFunCall *node) override {
+        if (node->lib >= 0) {
+            auto &cmd = code->libraries[node->lib].info->m_pBeginCmdInfo[node->key.value];
+            std::string name((char *) cmd.m_szName);
+            if (cmd.m_dtRetValType) {
+                return getType(cmd.m_dtRetValType);
+            }
+            return node->args->args[0]->type(this);
+        }
+        if (node->key.type == KeyType_Sub) {
+            auto *find = code->find<ESub>(node->key);
+            if (find) {
+                return find->retType;
+            }
+        }
+        if (node->key.type == KeyType_DllFunc) {
+            auto *find = code->find<EDllSub>(node->key);
+            if (find) {
+                return getType(find->type);
+            }
+        }
+
+        return builder.getVoidTy();
+    }
+    Type *type(ASTLiteral *node) override {
+        if (node->value.type == 3) {
+            return builder.getInt8PtrTy();;
+        }
+        return builder.getInt32Ty();
+    }
+    Type *type(ASTAddress *node) override {
+        return Visitor::type(node);
+    }
+    Type *type(ASTVariable *node) override {
+        EVar *var = code->find<EVar>(node->key);
+        if (!var) {
+            for (auto &local : sub->locals) {
+                if ((local.key.value | node->key.value) == node->key.value) {
+                    var = &local;
+                }
+            }
+            ASSERT(var, "Cannot find the local!");
+        }
+        if (var->value.getRef()) {
+            //return var->value->getType(); // 引用类型返回 指针类型
+        }
+        return var->value->getType()->getPointerElementType();
+    }
+    Type *type(ASTPostfix *node) override {
+        if (node->field->getType() == ASTStructMember::Type) {
+            auto *field = node->field->cast<ASTStructMember>();
+            auto *find = context.code->find<EStruct>(field->key);
+            for (int i = 0; i < find->members.size(); ++i) {
+                if (find->members[i].key == field->member) {
+                    return find->type->getStructElementType(i);
+                }
+            }
+        }
+        if (node->field->getType() == ASTSubscript::Type) {
+            return node->var->type(this)->getPointerElementType();
+        }
+        return nullptr;
+    }
+
     template<typename ...Args>
     EValue CallFunction(const char *name, Args ... args) {
         auto *find = context.get<ESub>(name, KeyType_Sub);
         if (find) {
             Value *arg_list[] = {args...};
-            return builder.CreateCall(find->value, arg_list);
+            return PushFree(builder.CreateCall(find->value, arg_list));
         }
         return builder.getInt32(0);
     }
@@ -553,19 +729,46 @@ public:
         }
         return builder.getInt32(0);
     }
+    EValue CreateCall(EDllSub *func, ASTArgs *args) {
+        if (func) {
+            vector<Value *> arg_list(args->args.size());
+            int index = 0;
+            for (auto &arg : args->args) {
+                Type *arg_type = (func->value->arg_begin() + index)->getType();
+/*
+                if (func->params[index].isRef() || func->params[index].isArray()) {
+                    arg_list[index] = arg->codegenLHS(this);
+                } else {
+
+                }
+*/
+                arg_list[index] = arg->codegen(this);
+                arg_list[index] = TypeCast(arg_list[index], arg_type);
+                index++;
+            }
+            return builder.CreateCall(func->value, arg_list);
+        }
+        return builder.getInt32(0);
+    }
     Value *TypeCast(EValue value, Type *cast_to) {
         Type *type = value->getType();
         if (type == cast_to) {
             return value;
         }
-        if (type == getType(SDT_TEXT)) {
-            if (cast_to == builder.getInt8PtrTy()) {
-                return CallFunction("String_CStr", value);
-            }
-        }
         if (type == getType(SDT_TEXT)->getPointerTo()) {
             if (cast_to == builder.getInt8PtrTy()) {
                 return CallFunction("String_CStr", value);
+            }
+            if (cast_to == getType(SDT_TEXT)) {
+                return builder.CreateLoad(value);
+            }
+        }
+        if (type == builder.getInt8PtrTy()) {
+            if (cast_to == getType(SDT_TEXT)) {
+                return builder.CreateLoad(StringCreate(value));
+            }
+            if (cast_to == getType(SDT_TEXT)->getPointerTo()) {
+                return StringCreate(value);
             }
         }
         uint32_t bits = type->getIntegerBitWidth();
@@ -576,21 +779,43 @@ public:
         if (bits > to_bits) {
             value.value = builder.CreateTrunc(value, cast_to);
         }
+        if (bits == to_bits) {
+            value.value = builder.CreateBitCast(value, cast_to);
+        }
         return value.value;
 
     }
     EValue StringCreate(EValue ptr) {
-        return PushFree(CallFunction("String_Create", ptr));
+        return CallFunction("String_Create", ptr);
+    }
+    void StringCopy(EValue lhs, EValue rhs) {
+        if (rhs->getType() == builder.getInt8PtrTy()) {
+            rhs = StringCreate(rhs);
+        }
+        CallFunction("String_Copy", lhs, rhs);
     }
     EValue StringAdd(EValue lhs, EValue rhs) {
-        return PushFree(CallFunction("String_Add", lhs, rhs));
+        return CallFunction("String_Add", lhs, rhs);
     }
     EValue StringFree(EValue value) {
         return CallFunction("String_Free", value);
     }
+    void LocalValueInit(EValue value) {
+        Type *type = value->getType()->getPointerElementType();
+        if (type == getType(SDT_INT)) {
+            builder.CreateStore(builder.getInt32(0), value);
+        }
+        if (type == getType(SDT_TEXT)) {
+            CallFunction("String_Init", value);
+        }
+    }
     EValue PushFree(EValue value) {
-        if (value->getType() == getType(SDT_TEXT)) {
-            frees.push_back(value);
+        Type *type = value->getType();
+        if (type == getType(SDT_TEXT)) {
+            Value *alloc = builder.CreateAlloca(type, nullptr, "string_temp");
+            builder.CreateStore(value, alloc);
+            frees.push_back(alloc);
+            return alloc;
         }
         return value;
     }
@@ -603,6 +828,11 @@ public:
                 StringFree(tofree);
             }
         }
+        for (auto &local : sub->locals) { //释放局部变量
+            if (local.type == SDT_TEXT) {
+                StringFree(local.value);
+            }
+        }
         if (current == nullptr) {
             hasReturn = true;
         }
@@ -611,12 +841,12 @@ public:
                 builder.CreateRetVoid();
             }
         } else {
-            builder.CreateRet(TypeCast(value, sub->retType));
+            Value *ret = TypeCast(value, sub->retType);
+
+            builder.CreateRet(ret);
+
         }
 
-    }
-    static void Error(const char *str, const char *file = __FILE__, int line = __LINE__) {
-        printf("%s\n in %s:%d ", str, file, line);
     }
 };
 

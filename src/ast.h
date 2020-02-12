@@ -9,9 +9,11 @@
 #include <memory>
 #include "visitor.h"
 #include "FileBuffer.h"
-#define AST_DECL() void accept(Visitor *visitor) override {visitor->enter(this);visitor->visit(this);visitor->leave(this);} \
-EValue codegen(Visitor *visitor) override { return visitor->codegen(this); }\
-EValue codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); }
+#define AST_DECL() \
+void accept(Visitor *visitor) override {visitor->enter(this);visitor->visit(this);visitor->leave(this);} \
+EValue codegen(Visitor *visitor) override { return visitor->codegen(this); } \
+EValue codegenLHS(Visitor *visitor) override { return visitor->codegenLHS(this); } \
+Type *type(Visitor *visitor) override { return visitor->type(this); }
 #define AST_NODE(ast) struct AST##ast;using AST##ast##Ptr = std::shared_ptr<AST##ast>;struct AST##ast : public ASTNode
 
 enum Property : uint16_t {
@@ -65,7 +67,7 @@ struct Key {
 };
 
 struct EConstant {
-    int type{0};
+    int type = 0;
     union {
         int val_int{};
         double val_double;
@@ -91,6 +93,7 @@ struct ASTNode {
     };
     virtual EValue codegen(Visitor *visitor) = 0;
     virtual EValue codegenLHS(Visitor *visitor) = 0;
+    virtual Type *type(Visitor *visitor) = 0;
     virtual int getType() { return 0; }
     template <typename Class>
     inline Class *cast() {

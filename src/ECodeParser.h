@@ -13,10 +13,10 @@ namespace llvm {
     class Function;
 }
 using namespace llvm;
-#define assert(condition, str) \
+#define ASSERT(condition, str) \
     do { \
     if(!(condition)) \
-        std::cout << str;\
+        printf("%s in file: %s:%d", str, __FILE__, __LINE__);\
     } while(0);
 #include <vector>
 #include <map>
@@ -102,7 +102,7 @@ struct ELibConst {
 
 struct EConst : public EBase {
     // Key key;
-    short property = 0;
+    uint16_t property = 0;
     // FixedData name;
     // FixedData comment;
     FixedData data;
@@ -173,6 +173,7 @@ struct ESub : public EBase {
     std::vector<EVar> locals;
     EModule *belong = nullptr; // 所属模块
     ASTProgramPtr ast = nullptr;
+    string signature;
     Function *value = nullptr;
     Type *retType = nullptr;
     json attr;
@@ -197,6 +198,7 @@ struct EDllSub : public EBase {
     FixedData lib;
     FixedData func;
     std::vector<EVar> params;
+    Function *value = nullptr;
 };
 
 struct ECode {

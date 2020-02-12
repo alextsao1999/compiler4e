@@ -40,7 +40,7 @@ void ECodeParser::SetElibPath(char *path) {
 }
 
 void ECodeParser::Parse() {
-    assert(Check("CNWTEPRG", 8), "not a e code file!");
+    ASSERT(Check("CNWTEPRG", 8), "not a e code file!");
     while (_buffer.Good()) {
         // 查找段
         if (Check(seg_start, 4)) {
@@ -203,7 +203,7 @@ void ECodeParser::ParseWindow() {
 
         // 下一个窗口的偏移
         int offset = _buffer.ReadInt();
-        assert(offset > 0, "read windows error");
+        ASSERT(offset > 0, "read windows error");
         offset += _buffer.pos;
 
         _buffer.Skip(34 + (window.number << 3));
