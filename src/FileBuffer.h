@@ -34,7 +34,14 @@ struct FixedData {
         int len = strlen(str);
         return length == len && memcmp(data, str, length) == 0;
     }
-
+    inline char operator[](const int &val) { return data[val]; }
+    inline int count(char ch) {
+        int ref = 0;
+        while (ref < length && data[ref] == '*') {
+            ref++;
+        }
+        return ref;
+    }
 };
 
 class FileBuffer {

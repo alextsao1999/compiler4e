@@ -16,6 +16,8 @@ struct EContext {
     ECode *code = nullptr;
     LLVMContext llvm;
     Module *dlls;
+    Value *bool_true = ConstantInt::getTrue(llvm);
+    Value *bool_false = ConstantInt::getFalse(llvm);
     std::map<int, Type *> types = {
             {SDT_BYTE,      IntegerType::getInt8Ty(llvm)},
             {SDT_SHORT,     IntegerType::getInt16Ty(llvm)},
@@ -23,15 +25,17 @@ struct EContext {
             {SDT_INT64,     IntegerType::getInt64Ty(llvm)},
             {SDT_FLOAT,     IntegerType::getFloatTy(llvm)},
             {SDT_DOUBLE,    IntegerType::getDoubleTy(llvm)},
-            {SDT_BOOL,      IntegerType::getInt32Ty(llvm)},
+            {SDT_BOOL,      IntegerType::getInt8Ty(llvm)},
             {SDT_DATE_TIME, IntegerType::getDoubleTy(llvm)},
             {SDT_TEXT,      IntegerType::getInt8PtrTy(llvm)},
             {SDT_BIN,       IntegerType::getInt8PtrTy(llvm)},
             {SDT_SUB_PTR,   IntegerType::getInt8PtrTy(llvm)},
             {SDT_STATMENT,  IntegerType::getInt8PtrTy(llvm)},
     };
+
     std::map<string, Type *> names = {
             {"char*", IntegerType::getInt8PtrTy(llvm)},
+            {"size", IntegerType::getInt64Ty(llvm)},
             {"char", IntegerType::getInt8Ty(llvm)},
             {"byte", IntegerType::getInt8Ty(llvm)},
             {"short", IntegerType::getInt16Ty(llvm)},
@@ -39,7 +43,7 @@ struct EContext {
             {"int64", IntegerType::getInt64Ty(llvm)},
             {"float", IntegerType::getFloatTy(llvm)},
             {"double", IntegerType::getDoubleTy(llvm)},
-            {"bool", IntegerType::getInt1PtrTy(llvm)},
+            {"bool", IntegerType::getInt1Ty(llvm)},
     };
     std::map<string, string> translator;
     explicit EContext(ECode *code) : code(code) {
@@ -60,6 +64,7 @@ struct EContext {
                 }
             }
         }
+        CreateMain();
     }
     Type *getType(Key key) {
         if (types.count(key.value)) {
@@ -151,11 +156,12 @@ struct EContext {
         }
         std::string &&name = sub->name.toString();
         if (name == "_启动子程序") {
-            name.assign("main");
+            name.assign("start_main");
         }
         std::vector<Type *> pts(sub->params.size());
         for (uint32_t i = 0; i < sub->params.size(); ++i) {
             auto &&cmt = sub->params[i].comment.toString();
+            sub->params[i].value.ref = sub->params[i].isRef() + sub->params[i].isArray();
             if (!cmt.empty() && cmt[0] == '#') {
                 auto value = json::parse(cmt.c_str() + 1);
                 pts[i] = names[value["type"]];
@@ -168,9 +174,13 @@ struct EContext {
                     pts[i] = pts[i]->getPointerTo(0);
                 }
             }
-            sub->params[i].value.ref = sub->params[i].isRef() + sub->params[i].isArray();
+
         }
         sub->retType = getType(sub->type);
+        int ref = sub->comment.count('*');
+        for (int j = 0; j < ref; ++j) {
+            sub->retType = sub->retType->getPointerTo();
+        }
         if (sub->attr.count("type")) {
             sub->retType = names[sub->attr["type"]];
         }
@@ -181,6 +191,17 @@ struct EContext {
         SetSubSignature(sub);
     }
     void CreateDll(EDllSub *dll) {
+        std::string &&comment = dll->comment.toString();
+        bool isVarArgs = false;
+        if (comment.back() == '.') {
+            comment.pop_back();
+            isVarArgs = true;
+        }
+        if (!comment.empty()) {
+            if (comment[0] == '@') {
+                translator.emplace(comment.c_str() + 1, dll->name.toString());
+            }
+        }
         std::vector<Type *> pts(dll->params.size());
         for (uint32_t i = 0; i < dll->params.size(); ++i) {
             dll->params[i].value.ref = dll->params[i].isRef() + dll->params[i].isArray();
@@ -200,9 +221,12 @@ struct EContext {
             }
         }
         auto *ret = getType(dll->type);
-        auto *type = FunctionType::get(ret, pts, false);
-        auto *func = Function::Create(type, Function::ExternalLinkage, dll->name.toString(), dlls);
-        func->setDLLStorageClass(Function::DLLImportStorageClass);
+        int ref = dll->comment.count('*');
+        for (int k = 0; k < ref; ++k) {
+            ret = ret->getPointerTo();
+        }
+        auto *type = FunctionType::get(ret, pts, isVarArgs);
+        auto *func = Function::Create(type, Function::ExternalLinkage, dll->func.toString(), dlls);
         dll->value = func;
     }
     static void SetSubSignature(ESub *sub) {
@@ -228,7 +252,20 @@ struct EContext {
         type->print(rso, false, true);
         return rso.str();
     }
-
+    void CreateMain() {
+/*
+        auto *i8ptr = IntegerType::getInt8PtrTy(llvm);
+        auto *i32 = IntegerType::getInt32Ty(llvm);
+        std::vector<Type *> pts = {i8ptr, i8ptr, i8ptr, i32};
+        auto *type = FunctionType::get(i32, pts, false);
+        Function *func = Function::Create(type, Function::ExternalLinkage, "start_e", dlls);
+        auto *entry = BasicBlock::Create(llvm, "entrypoint", func);
+        IRBuilder<> builder(entry);
+        auto *sub = get<ESub>("_启动子程序", KeyType_Sub);
+        Value *ret = builder.CreateCall(sub->value);
+        builder.CreateRet(ret);
+*/
+    }
 };
 class ECompiler : public Visitor {
 public:
@@ -265,7 +302,12 @@ public:
             if (!local.dimension.empty()) {
                 array = builder.getInt32(local.dimension[0]);
             }
-            local.value = builder.CreateAlloca(getType(local.type), array, local.name.toString());
+            auto *type = getType(local.type);
+            int ref = local.comment.count('*');
+            for (int j = 0; j < ref; ++j) {
+                type = type->getPointerTo();
+            }
+            local.value.value = builder.CreateAlloca(type, array, local.name.toString());
             //LocalValueInit(local.value);
         }
         for (auto &local : sub->locals) {
@@ -273,6 +315,7 @@ public:
         }
 
     }
+
     Type *getType(Key key) {
         return context.getType(key);
     }
@@ -320,21 +363,22 @@ public:
         auto *then_block = BasicBlock::Create(context.llvm, "then");
         auto *else_block = node->else_block ? BasicBlock::Create(context.llvm, "else") : leave;
         builder.CreateCondBr(value, then_block, else_block);
+        PushBasicBlock(then_block);
         builder.SetInsertPoint(then_block);
         if (node->then_block) {
             current = then_block;
             node->then_block->accept(this);
         }
         builder.CreateBr(leave);
-        sub->value->getBasicBlockList().push_back(then_block);
+
         if (node->else_block) {
             current = else_block;
+            PushBasicBlock(else_block);
             builder.SetInsertPoint(else_block);
             node->else_block->accept(this);
-            sub->value->getBasicBlockList().push_back(else_block);
             builder.CreateBr(leave);
         }
-        sub->value->getBasicBlockList().push_back(leave);
+        PushBasicBlock(leave);
         builder.SetInsertPoint(leave);
         current = before;
     }
@@ -409,40 +453,19 @@ public:
                 if (node->args->args.size() < 2) {
                     return;
                 }
-
-/*
-                node->accept(&dumper);
-                printf(" [%s = %s] \n",
-                        EContext::GetTypeString(node->args->args[0]->type(this)).c_str(),
-                        EContext::GetTypeString(node->args->args[1]->type(this)).c_str()
-                        );
-*/
-
                 Type *var_type = node->args->args[0]->type(this);
                 Type *val_type = node->args->args[1]->type(this);
                 if (var_type == builder.getInt8PtrTy()) {
-                    EValue var = node->args->args[0]->codegenLHS(this);
                     if (val_type == builder.getInt8PtrTy()) {
+                        EValue var = node->args->args[0]->codegenLHS(this);
                         EValue val = node->args->args[1]->codegenLHS(this);
+                        if (val == nullptr) {
+                            val = node->args->args[1]->codegen(this);
+                        }
                         builder.CreateStore(val, var);
+                        return;
                     }
-                    return;
                 }
-
-/*
-                if (var_type == builder.getInt8PtrTy()) {
-                    EValue var = node->args->args[0]->codegenLHS(this);
-                    if (val_type == builder.getInt8PtrTy()) {
-                        EValue val = node->args->args[1]->codegenLHS(this);
-                        builder.CreateStore(val, var);
-                    }
-                    if (val_type == builder.getInt32Ty()) {
-                        EValue val = node->args->args[1]->codegen(this);
-                        builder.CreateStore(TypeCast(val, builder.getInt8PtrTy()), var);
-                    }
-                    return;
-                }
-*/
                 EValue var = node->args->args[0]->codegenLHS(this);
                 EValue val = node->args->args[1]->codegen(this);
                 if (var_type == getType(SDT_TEXT)) {
@@ -450,24 +473,10 @@ public:
                     return;
                 }
                 builder.CreateStore(TypeCast(val, var_type), var);
-
-/*
-                uint32_t var_bits = var_type->getIntegerBitWidth();
-                uint32_t val_bits = val_type->getIntegerBitWidth();
-                if (var_bits > val_bits) {
-                    val = builder.CreateZExt(val, var->getType()->getPointerElementType());
-                }
-                if (var_bits < val_bits) {
-                    val = builder.CreateTrunc(val, var->getType()->getPointerElementType());
-                }
-                builder.CreateStore(TypeCast(val, var->getType()), var);
-*/
                 return;
             }
         }
-        if (node->key.type == KeyType_Sub || node->key.type == KeyType_DllFunc) {
-            node->codegen(this);
-        }
+        node->codegen(this);
     }
 
     EValue codegenLHS(ASTPostfix *node) override {
@@ -493,12 +502,13 @@ public:
     EValue codegenLHS(ASTVariable *node) override {
         EVar *var = code->find<EVar>(node->key);
         if (!var) {
-            for (auto &local : sub->locals) {
-                if ((local.key.value | node->key.value) == node->key.value) {
-                    var = &local;
-                }
+            if (!sub->params.empty()) {
+                var = &sub->params.front();
             }
-            ASSERT(var, "Cannot find the local!");
+            if (!sub->locals.empty()) {
+                var = &sub->locals.front();
+            }
+            ASSERT(var, "cannot find var\n");
         }
         EValue value = var->value;
         for (uint32_t i = 0; i < value.getRef(); ++i) {
@@ -585,23 +595,19 @@ public:
                 return builder.CreateICmp(cmps[name], lhs, rhs, "cmp_temp");
             }
             if (context.translator.count(name)) {
-                auto *find = context.get<ESub>(context.translator[name].c_str(), KeyType_Sub);
-                if (find) {
-                    return CreateCall(find, node->args.get());
-                }
+                return CreateCall(context.translator[name].c_str(), node->args.get());
             }
         }
         if (node->key.type == KeyType_Sub) {
             auto *find = code->find<ESub>(node->key);
             if (find) {
-                return CreateCall(find, node->args.get());
+                return CreateCall(find->value, node->args.get());
             }
         }
         if (node->key.type == KeyType_DllFunc) {
-
             auto *find = code->find<EDllSub>(node->key);
             if (find) {
-                return CreateCall(find, node->args.get());
+                return CreateCall(find->value, node->args.get(), true);
             }
         }
         return builder.getInt32(0);
@@ -611,7 +617,7 @@ public:
             return builder.getInt32(node->value.val_int);
         }
         if (node->value.type == 2) {
-            return builder.getInt32(node->value.val_bool);
+            return node->value.val_bool ? context.bool_true : context.bool_false;
         }
         if (node->value.type == 3) {
             auto *global = builder.CreateGlobalString(node->value.val_string.toStringRef());
@@ -628,7 +634,10 @@ public:
     }
     EValue codegen(ASTVariable *node) override {
         EValue addr = node->codegenLHS(this);
-        if (node->type(this) == getType(SDT_TEXT)) {
+        if (node->type(this)->isStructTy()) {
+            return addr;
+        }
+        if (node->type(this)->isPointerTy()) {
             return addr;
         }
         return builder.CreateLoad(addr);
@@ -704,49 +713,65 @@ public:
 
     template<typename ...Args>
     EValue CallFunction(const char *name, Args ... args) {
-        auto *find = context.get<ESub>(name, KeyType_Sub);
-        if (find) {
-            Value *arg_list[] = {args...};
-            return PushFree(builder.CreateCall(find->value, arg_list));
+        Value *arg_list[] = {args...};
+        for (auto &dll : code->dlls) {
+            if (dll.name == name) {
+                return PushFree(builder.CreateCall(dll.value, arg_list));
+            }
+        }
+        for (auto &fun : code->subs) {
+            if (fun.name == name) {
+                return PushFree(builder.CreateCall(fun.value, arg_list));
+            }
         }
         return builder.getInt32(0);
     }
-    EValue CreateCall(ESub *func, ASTArgs *args) {
+    EValue CreateCall(const char *name, ASTArgs *args) {
+        for (auto &dll : code->dlls) {
+            if (dll.name == name) {
+                return CreateCall(dll.value, args, true);
+            }
+        }
+        for (auto &fun : code->subs) {
+            if (fun.name == name) {
+                return CreateCall(fun.value, args);
+            }
+        }
+        return builder.getInt32(0);
+    }
+    EValue CreateCall(Function *func, vector<EVar> &params, ASTArgs *args) {
         if (func) {
             vector<Value *> arg_list(args->args.size());
             int index = 0;
             for (auto &arg : args->args) {
-                Type *arg_type = (func->value->arg_begin() + index)->getType();
-                if (func->params[index].isRef() || func->params[index].isArray()) {
-                    arg_list[index] = arg->codegenLHS(this);
+                Type *arg_type = (func->arg_begin() + index)->getType();
+                arg_list[index] = TypeCast(arg->codegen(this), arg_type);
+                index++;
+            }
+            return PushFree(builder.CreateCall(func, arg_list));
+        }
+        return builder.getInt32(0);
+    }
+    EValue CreateCall(Function *func, ASTArgs *args, bool isDll = false) {
+        if (func) {
+            vector<Value *> arg_list(args->args.size());
+            int index = 0;
+            size_t arg_size = func->arg_size();
+            for (auto &arg : args->args) {
+                if (index < arg_size) {
+                    Type *arg_type = (func->arg_begin() + index)->getType();
+                    arg_list[index] = TypeCast(arg->codegen(this), arg_type);
                 } else {
                     arg_list[index] = arg->codegen(this);
                 }
-                arg_list[index] = TypeCast(arg_list[index], arg_type);
-                index++;
-            }
-            return PushFree(builder.CreateCall(func->value, arg_list));
-        }
-        return builder.getInt32(0);
-    }
-    EValue CreateCall(EDllSub *func, ASTArgs *args) {
-        if (func) {
-            vector<Value *> arg_list(args->args.size());
-            int index = 0;
-            for (auto &arg : args->args) {
-                Type *arg_type = (func->value->arg_begin() + index)->getType();
-/*
-                if (func->params[index].isRef() || func->params[index].isArray()) {
-                    arg_list[index] = arg->codegenLHS(this);
-                } else {
-
+                if (isDll) {
+                    if (arg_list[index]->getType() == getType(SDT_TEXT)->getPointerTo()) {
+                        arg_list[index] = TypeCast(arg_list[index], builder.getInt8PtrTy());
+                    }
                 }
-*/
-                arg_list[index] = arg->codegen(this);
-                arg_list[index] = TypeCast(arg_list[index], arg_type);
                 index++;
             }
-            return builder.CreateCall(func->value, arg_list);
+            return PushFree(builder.CreateCall(func, arg_list));
         }
         return builder.getInt32(0);
     }
@@ -754,6 +779,9 @@ public:
         Type *type = value->getType();
         if (type == cast_to) {
             return value;
+        }
+        if (type == cast_to->getPointerTo()) {
+            return builder.CreateLoad(value);
         }
         if (type == getType(SDT_TEXT)->getPointerTo()) {
             if (cast_to == builder.getInt8PtrTy()) {
@@ -783,7 +811,6 @@ public:
             value.value = builder.CreateBitCast(value, cast_to);
         }
         return value.value;
-
     }
     EValue StringCreate(EValue ptr) {
         return CallFunction("String_Create", ptr);
