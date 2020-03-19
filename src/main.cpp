@@ -13,7 +13,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/ExecutionEngine/MCJIT.h"
-#include "llvm/ExecutionEngine/Interpreter.h"
 #include "llvm/Support/ToolOutputFile.h"
 #include "llvm/IR/LegacyPassManager.h"
 
@@ -80,7 +79,7 @@ void CompileFile(const char *file) {
             sys::getDefaultTargetTriple(), errors);
     TargetOptions targetOptions;
     TargetMachine *targetMachine = target->createTargetMachine(
-            "i386-w64-windows-gnu", sys::getHostCPUName(), "",
+            sys::getDefaultTargetTriple(), sys::getHostCPUName(), "",
             targetOptions, {});
     DataLayout layout = targetMachine->createDataLayout();
     context.dlls->setDataLayout(layout);
@@ -88,10 +87,10 @@ void CompileFile(const char *file) {
     legacy::PassManager passManager;
 
     std::string file_obj(file);
-    file_obj.append(".o");
+    file_obj.append(".s");
     ToolOutputFile output(file_obj, code, sys::fs::OF_None);
 
-    targetMachine->addPassesToEmitFile(passManager, output.os(), nullptr, TargetMachine::CGFT_ObjectFile);
+    targetMachine->addPassesToEmitFile(passManager, output.os(), nullptr, TargetMachine::CGFT_AssemblyFile);
     passManager.run(*context.dlls);
     output.keep();
 
@@ -100,13 +99,6 @@ int main(int count, const char **argv) {
     InitializeNativeTarget();
     InitializeNativeTargetAsmPrinter();
     InitializeNativeTargetAsmParser();
-
-/*
-    InitializeAllTargets();
-    InitializeAllTargetMCs();
-    InitializeAllAsmPrinters();
-    InitializeAllAsmParsers();
-*/
     for (int i = 1; i < count; ++i) {
         CompileFile(argv[i]);
         std::error_code code;
@@ -117,9 +109,7 @@ int main(int count, const char **argv) {
         output << "cd /d %~dp0\n";
         output << "gcc runtime.c -c -o runtime.o\n";
         output << "gcc ";
-        output << argv[i] << ".o runtime.o -o out.exe\n";
-
+        output << argv[i] << ".o runtime.o -luser32 -o out.exe\n";
     }
-
     return 0;
 }

@@ -18,6 +18,7 @@ struct FixedData {
     size_t length{0};
     FixedData(char *data, size_t length) : data(data), length(length) {}
     FixedData() = default;
+    inline bool empty() { return length == 0; }
     std::wstring toUnicode();
     std::string toUtf8();
     std::string toString() {

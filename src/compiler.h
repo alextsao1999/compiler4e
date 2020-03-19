@@ -193,22 +193,32 @@ struct EContext {
     void CreateDll(EDllSub *dll) {
         std::string &&comment = dll->comment.toString();
         bool isVarArgs = false;
+        bool isDllImport = false;
         if (comment.back() == '.') {
             comment.pop_back();
             isVarArgs = true;
         }
         if (!comment.empty()) {
             if (comment[0] == '@') {
-                translator.emplace(comment.c_str() + 1, dll->name.toString());
+                if (comment.length() > 1) {
+                    translator.emplace(comment.c_str() + 1, dll->name.toString());
+                } else {
+                    isDllImport = true;
+                }
             }
         }
         std::vector<Type *> pts(dll->params.size());
         for (uint32_t i = 0; i < dll->params.size(); ++i) {
             dll->params[i].value.ref = dll->params[i].isRef() + dll->params[i].isArray();
             auto &&cmt = dll->params[i].comment.toString();
-            if (!cmt.empty() && cmt[0] == '#') {
-                auto value = json::parse(cmt.c_str() + 1);
-                pts[i] = names[value["type"]];
+            if (!cmt.empty()) {
+                if (cmt[0] == '#') {
+                    auto value = json::parse(cmt.c_str() + 1);
+                    pts[i] = names[value["type"]];
+                } else if (cmt[0] == '[') {
+                    cmt.pop_back();
+                    pts[i] = names[cmt.c_str() + 1];
+                }
             } else {
                 if (dll->params[i].type == SDT_TEXT) {
                     pts[i] = IntegerType::get(llvm, 8);
@@ -227,6 +237,10 @@ struct EContext {
         }
         auto *type = FunctionType::get(ret, pts, isVarArgs);
         auto *func = Function::Create(type, Function::ExternalLinkage, dll->func.toString(), dlls);
+        //func->setDLLStorageClass();
+        if (isDllImport) {
+            func->setDLLStorageClass(GlobalValue::DLLImportStorageClass);
+        }
         dll->value = func;
     }
     static void SetSubSignature(ESub *sub) {
@@ -277,7 +291,6 @@ public:
     vector<EValue> frees;
     DumpVisitor dumper;
     bool hasReturn = false;
-
     explicit ECompiler(EContext &context, ESub *sub) :
             context(context), builder(context.llvm), sub(sub), dumper(context.code, sub) {
         code = context.code;
@@ -299,6 +312,9 @@ public:
         }
         for (auto &local : sub->locals) {
             EValue array = nullptr;
+            if (local.name.empty()) {
+                continue;
+            }
             if (!local.dimension.empty()) {
                 array = builder.getInt32(local.dimension[0]);
             }
@@ -308,12 +324,9 @@ public:
                 type = type->getPointerTo();
             }
             local.value.value = builder.CreateAlloca(type, array, local.name.toString());
-            //LocalValueInit(local.value);
-        }
-        for (auto &local : sub->locals) {
             LocalValueInit(local.value);
-        }
 
+        }
     }
 
     Type *getType(Key key) {
@@ -549,10 +562,6 @@ public:
                     return builder.getInt32(0);
                 }
                 auto ops = binary[name];
-/*
-                node->accept(&dumper);
-                printf("  ");
-*/
                 EValue lhs = nullptr;
                 for (auto & arg : node->args->args) {
                     Value *value = nullptr;
@@ -584,14 +593,8 @@ public:
                 }
                 EValue lhs = node->args->args[0]->codegen(this);
                 EValue rhs = node->args->args[1]->codegen(this);
-                uint32_t lhs_bits = lhs->getType()->getIntegerBitWidth();
-                uint32_t rhs_bits = rhs->getType()->getIntegerBitWidth();
-                if (lhs_bits > rhs_bits) {
-                    rhs = builder.CreateZExt(rhs, lhs->getType());
-                }
-                if (lhs_bits < rhs_bits) {
-                    lhs = builder.CreateZExt(lhs, rhs->getType());
-                }
+                EValue right = TypeCast(rhs, node->args->args[0]->type(this));
+                rhs = right;
                 return builder.CreateICmp(cmps[name], lhs, rhs, "cmp_temp");
             }
             if (context.translator.count(name)) {
@@ -613,24 +616,7 @@ public:
         return builder.getInt32(0);
     }
     EValue codegen(ASTLiteral *node) override {
-        if (node->value.type == 1) {
-            return builder.getInt32(node->value.val_int);
-        }
-        if (node->value.type == 2) {
-            return node->value.val_bool ? context.bool_true : context.bool_false;
-        }
-        if (node->value.type == 3) {
-            auto *global = builder.CreateGlobalString(node->value.val_string.toStringRef());
-            //auto *data = ConstantDataArray::getString(context.llvm, node->value.val_string.toStringRef(), true);
-            //auto *global = new GlobalVariable(*sub->belong->module, data->getType(), true, GlobalValue::PrivateLinkage, data);
-            Value *zero = builder.getInt32(0);
-            Value *idxs[] = {zero, zero};
-            return builder.CreateInBoundsGEP(global, idxs);
-        }
-        if (node->value.type == 5) {
-            return builder.getInt32(node->value.val_double);
-        }
-        return builder.getInt32(node->value.val_time);
+        return LoadConst(node->value);
     }
     EValue codegen(ASTVariable *node) override {
         EValue addr = node->codegenLHS(this);
@@ -645,6 +631,30 @@ public:
     EValue codegen(ASTPostfix *node) override {
         EValue value = node->codegenLHS(this);
         return builder.CreateLoad(value.value);
+    }
+    EValue codegen(ASTConstant *node) override {
+        auto *ec = code->find<EConst>(node->key);
+        if (!ec) {
+            return builder.getInt32(0);
+        }
+        return LoadConst(ec->value);
+    }
+    EValue codegen(ASTLibConstant *node) override {
+        //node->index
+        auto &lc = code->libraries[node->index].info->m_pLibConst[node->member];
+        if (lc.m_shtType == CT_NUM) {
+            return builder.getInt32(lc.m_dbValue);
+        }
+        if (lc.m_shtType == CT_BOOL) {
+            return lc.m_dbValue ? context.bool_true : context.bool_false;
+        }
+        if (lc.m_shtType == CT_TEXT) {
+            auto *global = builder.CreateGlobalString((char *) lc.m_szText);
+            Value *zero = builder.getInt32(0);
+            Value *idxs[] = {zero, zero};
+            return builder.CreateInBoundsGEP(global, idxs);
+        }
+        return builder.getInt32(0);
     }
 
     Type *type(ASTFunCall *node) override {
@@ -710,7 +720,43 @@ public:
         }
         return nullptr;
     }
+    Type *type(ASTConstant *node) override {
+        auto *ec = code->find<EConst>(node->key);
+        if (ec) {
+            if (ec->value.type == 3) {
+                return builder.getInt8PtrTy();
+            }
+        }
+        return builder.getInt32Ty();
+    }
+    Type *type(ASTLibConstant *node) override {
+        auto &lc = code->libraries[node->index].info->m_pLibConst[node->member];
+        if (lc.m_shtType == CT_TEXT) {
+            return builder.getInt8PtrTy();
+        }
+        return builder.getInt32Ty();
+    }
 
+    EValue LoadConst(EConstant &value) {
+        if (value.type == 1) {
+            return builder.getInt32(value.val_int);
+        }
+        if (value.type == 2) {
+            return value.val_bool ? context.bool_true : context.bool_false;
+        }
+        if (value.type == 3) {
+            auto *global = builder.CreateGlobalString(value.val_string.toStringRef());
+            //auto *data = ConstantDataArray::getString(context.llvm, value.val_string.toStringRef(), true);
+            //auto *global = new GlobalVariable(*sub->belong->module, data->getType(), true, GlobalValue::PrivateLinkage, data);
+            Value *zero = builder.getInt32(0);
+            Value *idxs[] = {zero, zero};
+            return builder.CreateInBoundsGEP(global, idxs);
+        }
+        if (value.type == 5) {
+            return builder.getInt32(value.val_double);
+        }
+        return builder.getInt32(value.val_time);
+    }
     template<typename ...Args>
     EValue CallFunction(const char *name, Args ... args) {
         Value *arg_list[] = {args...};
